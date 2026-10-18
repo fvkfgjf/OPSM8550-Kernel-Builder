@@ -125,12 +125,20 @@ KSU_COMMIT=""
 case "$KSU_TYPE" in
   None) ;;
   BakaSU*)
-    # BakaSU is the only supported root solution. Its current main already
-    # carries the native SUSFS inline-hook runtime, so every preset is pinned
-    # to the tested revision for reproducible builds. Advance this pin only
-    # after a validation run against the new revision passes.
+    # BakaSU is the only supported root solution and every preset is pinned to
+    # an exact revision for reproducible builds.
+    #
+    # BakaSU main deliberately suspends SUSFS builds (commit 48fa4bb7 makes
+    # kernel/tools/susfs_compat.mk fail with "$(error Please wait susfs
+    # update.)") until simonpunk syncs the kernel-side SUSFS hooks. The
+    # upstream sync-susfs branch contains that sync and removes the hard error,
+    # so SUSFS presets pin it instead. Non-SUSFS presets stay on main.
     KSU_REPO="https://github.com/Baka-SU/BakaSU.git"
-    KSU_REF="b2c595ddfa64b685e5a144ad37b7c95f912fb92a"
+    if [[ "$KSU_TYPE" == *susfs* ]]; then
+      KSU_REF="f308ed0936bdd31163cb53da3f42bc7a698f5512"
+    else
+      KSU_REF="b2c595ddfa64b685e5a144ad37b7c95f912fb92a"
+    fi
     KSU_COMMIT="$KSU_REF"
     ;;
 esac

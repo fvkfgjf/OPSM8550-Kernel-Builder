@@ -243,7 +243,9 @@ grep -Fq 'DROIDSPACES_SUFFIX="-droidspaces-${DROIDSPACES_SLOT}"' "$WORKFLOW_FILE
 grep -Fq 'KSU_REPO="https://github.com/Baka-SU/BakaSU.git"' "$RESOLVER_SCRIPT" \
   || fail "resolver must use the BakaSU repository"
 grep -Fq 'KSU_REF="b2c595ddfa64b685e5a144ad37b7c95f912fb92a"' "$RESOLVER_SCRIPT" \
-  || fail "resolver must pin the tested BakaSU revision"
+  || fail "resolver must pin the tested BakaSU main revision"
+grep -Fq 'KSU_REF="f308ed0936bdd31163cb53da3f42bc7a698f5512"' "$RESOLVER_SCRIPT" \
+  || fail "resolver must pin the SUSFS-synced BakaSU revision"
 grep -Fq '"BakaSU"|"BakaSU-with-susfs"|"BakaSU-with-susfs-nomount")' "$KSU_SETUP_SCRIPT" \
   || fail "KernelSU setup must install BakaSU for every preset"
 if grep -Fq 'tiann/KernelSU' "$RESOLVER_SCRIPT" "$KSU_SETUP_SCRIPT"; then
@@ -446,8 +448,13 @@ for root_preset in \
     || fail "$root_preset resolver failed"
   grep -Fxq 'KSU_REPO=https://github.com/Baka-SU/BakaSU.git' "$RESOLVER_FIXTURE_DIR/env" \
     || fail "$root_preset must resolve the BakaSU repository"
-  grep -Fxq 'KSU_COMMIT=b2c595ddfa64b685e5a144ad37b7c95f912fb92a' "$RESOLVER_FIXTURE_DIR/env" \
-    || fail "$root_preset lost its BakaSU pin"
+  if [[ "$root_preset" == *SUSFS* ]]; then
+    expected_ksu_pin=f308ed0936bdd31163cb53da3f42bc7a698f5512
+  else
+    expected_ksu_pin=b2c595ddfa64b685e5a144ad37b7c95f912fb92a
+  fi
+  grep -Fxq "KSU_COMMIT=$expected_ksu_pin" "$RESOLVER_FIXTURE_DIR/env" \
+    || fail "$root_preset lost its BakaSU pin ($expected_ksu_pin)"
 done
 
 # Droidspaces integration: kernel series detection, kABI slot/patch mapping,

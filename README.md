@@ -133,13 +133,21 @@ BakaSU is the only supported root solution. The workflow exposes these presets:
 
 Official KernelSU, KernelSU-Next, KowSU and SukiSU Ultra were removed together
 with the KPM loader that only SukiSU provided. BakaSU is the renamed successor
-of the former ReSukiSU project (`Baka-SU/BakaSU`), and every preset is pinned to
-`b2c595ddfa64b685e5a144ad37b7c95f912fb92a`, the current `main` revision that
-carries the native SUSFS inline-hook runtime. The pipeline still verifies that
-the runtime exposes the expected SUSFS static keys and that the build reports
-the inline hook mode, so a stale pin fails closed instead of silently falling
-back to a tracepoint or manual hook. Advance the pin only after a validation
-run against the new revision passes.
+of the former ReSukiSU project (`Baka-SU/BakaSU`). Every preset is pinned to an
+exact revision:
+
+- `BakaSU` uses `b2c595ddfa64b685e5a144ad37b7c95f912fb92a` on `main`.
+- The SUSFS presets use `f308ed0936bdd31163cb53da3f42bc7a698f5512` from the
+  upstream `sync-susfs` branch. BakaSU `main` deliberately suspends SUSFS
+  builds (commit `48fa4bb7` makes `kernel/tools/susfs_compat.mk` fail with
+  `Please wait susfs update.`) until simonpunk syncs the kernel-side hooks, and
+  `sync-susfs` contains that sync plus the matching compat removal.
+
+The pipeline verifies that the runtime exposes the expected SUSFS static keys
+and that the build reports the inline hook mode, so a stale pin fails closed
+instead of silently falling back to a tracepoint or manual hook. Advance a pin
+only after a validation run against the new revision passes; switch SUSFS
+presets back to `main` once upstream lifts the suspension.
 
 The BakaSU + SUSFS presets resolve `simonpunk/susfs4ksu` at an exact commit,
 apply the kernel-side SUSFS patch, and require upstream v2.2.0 or newer while
