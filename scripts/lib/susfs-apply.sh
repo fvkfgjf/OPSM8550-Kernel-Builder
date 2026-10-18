@@ -10,13 +10,6 @@ version_is_at_least() {
   [[ "$(printf '%s\n' "$minimum" "$actual" | sort -V | head -n 1)" == "$minimum" ]]
 }
 
-is_sukisu_susfs_variant() {
-  case "${KSU_TYPE:-}" in
-    SukiSU-Ultra-with-susfs-KPM|SukiSU-Ultra-with-susfs-nomount-KPM|SukiSU-Ultra-with-susfs-zeromount-KPM) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
 apply_susfs_task_mmu_fix() {
   local file="fs/proc/task_mmu.c"
   local block
@@ -137,123 +130,6 @@ patch_susfs_kernelsu_layout() {
   fi
 }
 
-resolve_known_sukisu_susfs_rejects() {
-  local ksu_repo_dir="$1"
-  local ksu_dir="$2"
-  local init_file="${ksu_dir}/core/init.c"
-  local kernel_umount_file="${ksu_dir}/feature/kernel_umount.c"
-  local allowlist_file="${ksu_dir}/policy/allowlist.c"
-  local kbuild_file="${ksu_dir}/Kbuild"
-  local symbol_resolver_file="${ksu_dir}/infra/symbol_resolver.c"
-  local core_compat_patch
-  local policy_compat_patch
-  local reject
-  local relative_reject
-  local has_policy_drift=0
-  local reject_files=()
-  local reject_relatives=()
-
-  is_sukisu_susfs_variant || return 1
-
-  mapfile -t reject_files < <(find "$ksu_repo_dir" -name '*.rej' -print | sort)
-  for reject in "${reject_files[@]}"; do
-    relative_reject="$(realpath --relative-to="$ksu_repo_dir" "$reject")"
-    reject_relatives+=("$relative_reject")
-  done
-
-  case "${#reject_relatives[@]}" in
-    1)
-      [[ "${reject_relatives[0]}" == "kernel/core/init.c.rej" ]] || return 1
-      ;;
-    3)
-      [[ "${reject_relatives[0]}" == "kernel/core/init.c.rej" ]] || return 1
-      [[ "${reject_relatives[1]}" == "kernel/feature/kernel_umount.c.rej" ]] || return 1
-      [[ "${reject_relatives[2]}" == "kernel/policy/allowlist.c.rej" ]] || return 1
-      has_policy_drift=1
-      ;;
-    *)
-      return 1
-      ;;
-  esac
-
-  grep -q 'ksu_init_symbol_resolver' "${ksu_repo_dir}/kernel/core/init.c.rej" || return 1
-  grep -q 'ksu_syscall_hook_manager_init' "${ksu_repo_dir}/kernel/core/init.c.rej" || return 1
-
-  if [[ "$has_policy_drift" -eq 1 ]]; then
-    grep -Fq 'Webview zygote forked from zygote: zygote -> webview_zygote' \
-      "${ksu_repo_dir}/kernel/feature/kernel_umount.c.rej" || return 1
-    grep -Fq 'ksu_uid_should_umount(new_uid)' \
-      "${ksu_repo_dir}/kernel/feature/kernel_umount.c.rej" || return 1
-    grep -Fq 'ksu_get_manager_appid() == uid % PER_USER_RANGE' \
-      "${ksu_repo_dir}/kernel/policy/allowlist.c.rej" || return 1
-  fi
-
-  test -f "$init_file" || return 1
-  grep -Fq '#include "feature/uts_spoof.h"' "$init_file" || return 1
-  grep -Fq 'if (spoof_release || spoof_version)' "$init_file" || return 1
-  grep -Fq '#include <linux/susfs.h>' "$init_file" || return 1
-  grep -Fq 'ksu_init_symbol_resolver();' "$init_file" || return 1
-  grep -Fq 'ksu_syscall_hook_manager_init();' "$init_file" || return 1
-
-  test -f "$kbuild_file" || return 1
-  test -f "$symbol_resolver_file" || return 1
-  grep -Fq 'unsigned long __nocfi find_kernel_symbol_exact' "$symbol_resolver_file" || return 1
-  grep -Fq 'obj-$(CONFIG_KPM) += kpm/compact.o' "$kbuild_file" || return 1
-  if grep -Fq 'kernelsu-objs += infra/symbol_resolver.o' "$kbuild_file"; then
-    return 1
-  fi
-
-  core_compat_patch="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../patches/sukisu-susfs-core-init-compat.patch"
-  test -f "$core_compat_patch" || return 1
-
-  if [[ "$has_policy_drift" -eq 1 ]]; then
-    test -f "$kernel_umount_file" || return 1
-    test -f "$allowlist_file" || return 1
-    grep -Fq 'webview_zygote (controlled by feature policy)' "$kernel_umount_file" || return 1
-    grep -Fq 'ksu_uid_should_umount(new_uid)' "$kernel_umount_file" || return 1
-    grep -Fq 'ksu_get_manager_appid() == uid % PER_USER_RANGE' "$allowlist_file" || return 1
-    grep -Fq 'if (unlikely(uid == WEBVIEW_ZYGOTE_UID))' "$allowlist_file" || return 1
-
-    policy_compat_patch="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../patches/sukisu-susfs-policy-compat.patch"
-    test -f "$policy_compat_patch" || return 1
-  fi
-
-  (
-    cd "$ksu_repo_dir" || exit 1
-    patch --batch --forward -p1 < "$core_compat_patch"
-    if [[ "$has_policy_drift" -eq 1 ]]; then
-      patch --batch --forward -p1 < "$policy_compat_patch"
-    fi
-  ) || return 1
-
-  grep -Fq '#include "feature/uts_spoof.h"' "$init_file" || return 1
-  grep -Fq 'ksu_spoof_version(spoof_release, spoof_version);' "$init_file" || return 1
-  grep -Fq 'susfs_init();' "$init_file" || return 1
-  grep -Fq 'ksu_setuid_hook_init();' "$init_file" || return 1
-  grep -Fq 'ksu_sucompat_init();' "$init_file" || return 1
-  grep -Fq '#include "infra/symbol_resolver.h"' "$init_file" || return 1
-  grep -Fq 'ksu_init_symbol_resolver();' "$init_file" || return 1
-  grep -Fq 'kernelsu-objs += infra/symbol_resolver.o' "$kbuild_file" || return 1
-
-  if grep -Eq 'ksu_(late_loaded|bundled)|ksu_syscall_hook_(init|manager_init)|ksu_lsm_hook_init' "$init_file"; then
-    return 1
-  fi
-
-  if [[ "$has_policy_drift" -eq 1 ]]; then
-    if grep -Eq 'ksu_uid_should_umount\(new_uid\)|is_zygote_child = is_zygote' "$kernel_umount_file"; then
-      return 1
-    fi
-    if grep -Fq 'ksu_get_manager_appid() == uid % PER_USER_RANGE' "$allowlist_file"; then
-      return 1
-    fi
-    grep -Fq 'if (unlikely(uid == WEBVIEW_ZYGOTE_UID))' "$allowlist_file" || return 1
-    grep -Fq 'return ksu_webview_zygote_umount_enabled;' "$allowlist_file" || return 1
-  fi
-
-  rm -f "${reject_files[@]}"
-  echo "[+] Resolved recognized SukiSU Ultra UTS-spoof/KPM resolver/policy drift in the SUSFS patch."
-}
-
 patch_kernelsu_for_susfs() {
   local ksu_repo_dir="$1"
   local ksu_dir="$2"
@@ -279,12 +155,9 @@ patch_kernelsu_for_susfs() {
     cd "$ksu_repo_dir"
     patch --batch --forward -p1 < "$(basename "$patch_file")"
   ); then
-    echo "[!] KernelSU SUSFS patch reported conflicts, checking recognized SukiSU Ultra drift..."
-    if ! resolve_known_sukisu_susfs_rejects "$ksu_repo_dir" "$ksu_dir"; then
-      echo "::error::Failed to apply KernelSU susfs patch in $ksu_repo_dir"
-      find "$ksu_repo_dir" -name '*.rej' -print -exec sh -c 'echo "---- $1 ----"; cat "$1"' _ {} \;
-      exit 1
-    fi
+    echo "::error::Failed to apply KernelSU SUSFS patch in $ksu_repo_dir"
+    find "$ksu_repo_dir" -name '*.rej' -print -exec sh -c 'echo "---- $1 ----"; cat "$1"' _ {} \;
+    exit 1
   fi
 
   if find "$ksu_repo_dir" -name '*.rej' -print -quit | grep -q .; then
@@ -299,7 +172,7 @@ patch_kernelsu_for_susfs() {
   }
 }
 
-patch_resukisu_susfs_runtime_compat() {
+patch_bakasu_susfs_runtime_compat() {
   local ksu_kernel_dir="$1"
   local runtime_file="${ksu_kernel_dir}/runtime/ksud_integration.c"
 
@@ -310,7 +183,7 @@ patch_resukisu_susfs_runtime_compat() {
      grep -Eq '^[[:space:]]*DEFINE_STATIC_KEY_TRUE\(ksu_is_input_hook_enabled\);$' "$runtime_file" && \
      grep -Eq '^[[:space:]]*#define ksu_init_rc_hook_inactive\(\) \(!static_branch_likely\(&ksu_is_init_rc_hook_enabled\)\)$' "$runtime_file" && \
      grep -Eq '^[[:space:]]*#define ksu_input_hook_inactive\(\) \(!static_branch_likely\(&ksu_is_input_hook_enabled\)\)$' "$runtime_file"; then
-    echo "[+] ReSukiSU runtime already contains native susfs hook support."
+    echo "[+] BakaSU runtime already contains native susfs hook support."
     return 0
   fi
 
@@ -453,8 +326,8 @@ apply_susfs_full() {
   mkdir -p "${ksu_kernel_dir}/include/linux"
   cp ./susfs/kernel_patches/include/linux/* "${ksu_kernel_dir}/include/linux/"
   patch_kernelsu_for_susfs "${ksu_repo_dir}" "${ksu_kernel_dir}"
-  if [[ "$KSU_TYPE" == ReSukiSU* ]]; then
-    patch_resukisu_susfs_runtime_compat "${ksu_kernel_dir}"
+  if [[ "$KSU_TYPE" == BakaSU* ]]; then
+    patch_bakasu_susfs_runtime_compat "${ksu_kernel_dir}"
   fi
   patch_susfs_selinux_hide_compat "${ksu_kernel_dir}"
 

@@ -64,17 +64,28 @@ append_file_block() {
     echo "- NoMount commit: \`${NOMOUNT_COMMIT}\`"
     echo "- NoMount version: v${NOMOUNT_VERSION:-unknown}"
   fi
-  if [[ -n "${ZEROMOUNT_COMMIT:-}" ]]; then
-    echo "- ZeroMount GKI target: ${ZEROMOUNT_GKI_TAG:-unknown}"
-    echo "- ZeroMount patch commit: \`${ZEROMOUNT_COMMIT}\`"
-    echo "- ZeroMount patch SHA-256: ${ZEROMOUNT_PATCH_SHA256:-unknown}"
+  if [[ "${DROIDSPACES_SLOT:-off}" != "off" ]]; then
+    echo "- Droidspaces kABI slot: ${DROIDSPACES_SLOT}"
+    echo "- Droidspaces kernel series: ${DROIDSPACES_SERIES:-unknown}"
+    echo "- Droidspaces patch commit: \`${DROIDSPACES_COMMIT:-unknown}\`"
+    echo "- Droidspaces SYSVIPC patch: ${DROIDSPACES_PATCH_FILE:-unknown}"
+    echo "- Droidspaces SYSVIPC patch SHA-256: ${DROIDSPACES_PATCH_SHA256:-unknown}"
+    if [[ -n "${DROIDSPACES_POSIX_PATCH_FILE:-}" ]]; then
+      echo "- Droidspaces POSIX_MQUEUE patch: ${DROIDSPACES_POSIX_PATCH_FILE}"
+      echo "- Droidspaces POSIX_MQUEUE patch SHA-256: ${DROIDSPACES_POSIX_PATCH_SHA256:-unknown}"
+    fi
+    echo "- Droidspaces NTSync: ${DROIDSPACES_NTSYNC:-false}"
+    if [[ "${DROIDSPACES_NTSYNC:-false}" == "true" ]]; then
+      echo "- Droidspaces NTSync patch: ${DROIDSPACES_NTSYNC_PATCH:-unknown}"
+      echo "- Droidspaces NTSync patch SHA-256: ${DROIDSPACES_NTSYNC_COMPAT_SHA256:-unknown}"
+    fi
   fi
   echo
 
   if [[ -f "${SOC}/out/.config" ]]; then
     echo '#### .config snapshot'
     echo '```text'
-    grep -E '^CONFIG_(MODULES|MODULE_UNLOAD|MODVERSIONS|MODULE_SIG|MODULE_SIG_FORCE|MODULE_SIG_PROTECT|MODULE_FORCE_LOAD|ARCH_INLINE_SPIN_LOCK|ARCH_INLINE_SPIN_UNLOCK|INLINE_SPIN_LOCK|UNINLINE_SPIN_UNLOCK|TRIM_UNUSED_KSYMS|KASAN|KASAN_GENERIC|KASAN_SW_TAGS|KASAN_HW_TAGS)=|^# CONFIG_(MODULE_SIG_FORCE|MODULE_SIG_PROTECT|MODULE_FORCE_LOAD|UNINLINE_SPIN_UNLOCK|TRIM_UNUSED_KSYMS|KASAN|KASAN_GENERIC|KASAN_SW_TAGS|KASAN_HW_TAGS) is not set$|^CONFIG_KSU=|^CONFIG_KSU_SUSFS|^CONFIG_KSU_MANUAL_HOOK|^CONFIG_NOMOUNT=|^CONFIG_ZEROMOUNT=|^CONFIG_KPM=|^CONFIG_KALLSYMS(_ALL)?=' "${SOC}/out/.config" || true
+    grep -E '^CONFIG_(MODULES|MODULE_UNLOAD|MODVERSIONS|MODULE_SIG|MODULE_SIG_FORCE|MODULE_SIG_PROTECT|MODULE_FORCE_LOAD|ARCH_INLINE_SPIN_LOCK|ARCH_INLINE_SPIN_UNLOCK|INLINE_SPIN_LOCK|UNINLINE_SPIN_UNLOCK|TRIM_UNUSED_KSYMS|KASAN|KASAN_GENERIC|KASAN_SW_TAGS|KASAN_HW_TAGS)=|^# CONFIG_(MODULE_SIG_FORCE|MODULE_SIG_PROTECT|MODULE_FORCE_LOAD|UNINLINE_SPIN_UNLOCK|TRIM_UNUSED_KSYMS|KASAN|KASAN_GENERIC|KASAN_SW_TAGS|KASAN_HW_TAGS) is not set$|^CONFIG_KSU=|^CONFIG_KSU_SUSFS|^CONFIG_KSU_MANUAL_HOOK|^CONFIG_NOMOUNT=|^CONFIG_SYSVIPC=|^CONFIG_POSIX_MQUEUE=|^CONFIG_IPC_NS=|^CONFIG_PID_NS=|^CONFIG_DEVTMPFS=|^CONFIG_NTSYNC=|^CONFIG_USER_NS=' "${SOC}/out/.config" || true
     echo '```'
     echo
   fi
@@ -84,8 +95,7 @@ append_file_block() {
   append_file_block "susfs-proof.txt"        "${SOC}/susfs-proof.txt"
   append_file_block "nomount-source-proof.txt" "${SOC}/nomount-source-proof.txt"
   append_file_block "nomount-proof.txt"        "${SOC}/nomount-proof.txt"
-  append_file_block "zeromount-source-proof.txt" "${SOC}/zeromount-source-proof.txt"
-  append_file_block "zeromount-proof.txt"        "${SOC}/zeromount-proof.txt"
-  append_file_block "kpm-source-proof.txt"     "${SOC}/kpm-source-proof.txt"
-  append_file_block "kpm-proof.txt"            "${SOC}/kpm-proof.txt"
+  append_file_block "droidspaces-source-proof.txt" "${SOC}/droidspaces-source-proof.txt"
+  append_file_block "droidspaces-ntsync-source-proof.txt" "${SOC}/droidspaces-ntsync-source-proof.txt"
+  append_file_block "droidspaces-proof.txt"        "${SOC}/droidspaces-proof.txt"
 } >> "$GITHUB_STEP_SUMMARY"

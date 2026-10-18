@@ -44,10 +44,23 @@ SUSFS_VERSION="${SUSFS_VERSION:-}"
 NOMOUNT_REF="${NOMOUNT_REF:-}"
 NOMOUNT_COMMIT="${NOMOUNT_COMMIT:-}"
 NOMOUNT_VERSION="${NOMOUNT_VERSION:-}"
-ZEROMOUNT_REPO="${ZEROMOUNT_REPO:-}"
-ZEROMOUNT_COMMIT="${ZEROMOUNT_COMMIT:-}"
-ZEROMOUNT_GKI_TAG="${ZEROMOUNT_GKI_TAG:-}"
-ZEROMOUNT_PATCH_SHA256="${ZEROMOUNT_PATCH_SHA256:-}"
+DROIDSPACES_SLOT="${DROIDSPACES_SLOT:-off}"
+DROIDSPACES_ENABLED=0
+if [[ "$DROIDSPACES_SLOT" != "off" ]]; then
+  DROIDSPACES_ENABLED=1
+fi
+DROIDSPACES_COMMIT="${DROIDSPACES_COMMIT:-}"
+DROIDSPACES_SERIES="${DROIDSPACES_SERIES:-}"
+DROIDSPACES_PATCH_FILE="${DROIDSPACES_PATCH_FILE:-}"
+DROIDSPACES_PATCH_SHA256="${DROIDSPACES_PATCH_SHA256:-}"
+DROIDSPACES_POSIX_PATCH_FILE="${DROIDSPACES_POSIX_PATCH_FILE:-}"
+DROIDSPACES_POSIX_PATCH_SHA256="${DROIDSPACES_POSIX_PATCH_SHA256:-}"
+DROIDSPACES_ABI_PATCH_SKIPPED="${DROIDSPACES_ABI_PATCH_SKIPPED:-0}"
+DROIDSPACES_POSIX_PATCH_SKIPPED="${DROIDSPACES_POSIX_PATCH_SKIPPED:-0}"
+DROIDSPACES_NTSYNC="${DROIDSPACES_NTSYNC:-false}"
+DROIDSPACES_NTSYNC_PATCH="${DROIDSPACES_NTSYNC_PATCH:-}"
+DROIDSPACES_NTSYNC_BASE_SHA256="${DROIDSPACES_NTSYNC_BASE_SHA256:-}"
+DROIDSPACES_NTSYNC_COMPAT_SHA256="${DROIDSPACES_NTSYNC_COMPAT_SHA256:-}"
 GITHUB_SERVER_URL="${GITHUB_SERVER_URL:-https://github.com}"
 GITHUB_REPOSITORY="${GITHUB_REPOSITORY:-local/OPSM8550-Kernel-Builder}"
 GITHUB_RUN_ID="${GITHUB_RUN_ID:-local}"
@@ -64,11 +77,13 @@ ZIP_NAME="${PROFILE_ID}_${KSU_TYPE}_${SHORT_KERNEL_COMMIT}_${BUILD_TIMESTAMP}"
 if [[ "$ROM_GKI_MODULE_COMPAT" == 1 ]]; then
   ZIP_NAME="${ZIP_NAME}_rom-gki-compat"
 fi
-ASSET_DIR="${GITHUB_WORKSPACE:-$(pwd)}/release-assets"
-KPM_ENABLED=false
-if [[ "$KSU_TYPE" == *KPM* ]]; then
-  KPM_ENABLED=true
+if [[ "$DROIDSPACES_SLOT" != "off" ]]; then
+  ZIP_NAME="${ZIP_NAME}_droidspaces-${DROIDSPACES_SLOT}"
+  if [[ "$DROIDSPACES_NTSYNC" == "true" ]]; then
+    ZIP_NAME="${ZIP_NAME}-ntsync"
+  fi
 fi
+ASSET_DIR="${GITHUB_WORKSPACE:-$(pwd)}/release-assets"
 
 {
   echo "ZIP_NAME=$ZIP_NAME"
@@ -116,20 +131,7 @@ set_anykernel_flasher_developer "$ANYKERNEL_UPDATE_BINARY"
 add_anykernel_devicecheck_diagnostics "$ANYKERNEL_UPDATE_BINARY"
 patch_anykernel_app_flash_staging "$ANYKERNEL_UPDATE_BINARY"
 
-if [[ "$KPM_ENABLED" == true ]]; then
-  KSU_CHECKOUT_NAME="$(basename "${KSU_REPO%.git}")"
-  KSU_ARM64_BUSYBOX="${SOC}/${KSU_CHECKOUT_NAME}/userspace/ksud/bin/aarch64/busybox"
-  install_anykernel_arm64_busybox "$KSU_ARM64_BUSYBOX" "AnyKernel3/tools/busybox"
-  install_anykernel_arm64_magiskboot \
-    "$MAGISK_APK_URL" \
-    "$MAGISK_APK_SHA256" \
-    "$MAGISKBOOT_ARM64_SHA256" \
-    "AnyKernel3/tools/magiskboot" \
-    "$MAGISK_APK_PATH"
-  prepare_anykernel_arm64_toolset "AnyKernel3/tools"
-  ANYKERNEL_BUSYBOX_ABI="arm64"
-  ARM64_TOOLSET_REQUIRED=true
-elif [[ "$PROFILE_ID" == sm8650-oneplus12-crdroid ]]; then
+if [[ "$PROFILE_ID" == sm8650-oneplus12-crdroid ]]; then
   install_anykernel_arm64_magiskboot \
     "$MAGISK_APK_URL" \
     "$MAGISK_APK_SHA256" \
@@ -168,7 +170,6 @@ jq -n \
   --arg kernel_make_flags "$KERNEL_MAKE_FLAGS" \
   --argjson rom_gki_module_compat "$([[ "$ROM_GKI_MODULE_COMPAT" == 1 ]] && echo true || echo false)" \
   --arg root_solution "$KSU_TYPE" \
-  --argjson kpm_enabled "$KPM_ENABLED" \
   --arg ksu_repo "$KSU_REPO" \
   --arg ksu_ref "$KSU_REF" \
   --arg ksu_commit "$KSU_COMMIT" \
@@ -178,10 +179,20 @@ jq -n \
   --arg nomount_ref "$NOMOUNT_REF" \
   --arg nomount_commit "$NOMOUNT_COMMIT" \
   --arg nomount_version "$NOMOUNT_VERSION" \
-  --arg zeromount_repo "$ZEROMOUNT_REPO" \
-  --arg zeromount_commit "$ZEROMOUNT_COMMIT" \
-  --arg zeromount_gki_tag "$ZEROMOUNT_GKI_TAG" \
-  --arg zeromount_patch_sha256 "$ZEROMOUNT_PATCH_SHA256" \
+  --arg droidspaces_slot "$DROIDSPACES_SLOT" \
+  --argjson droidspaces_enabled "$([[ "$DROIDSPACES_ENABLED" == 1 ]] && echo true || echo false)" \
+  --arg droidspaces_patch_commit "$DROIDSPACES_COMMIT" \
+  --arg droidspaces_kernel_series "$DROIDSPACES_SERIES" \
+  --arg droidspaces_sysvipc_patch "$DROIDSPACES_PATCH_FILE" \
+  --arg droidspaces_sysvipc_patch_sha256 "$DROIDSPACES_PATCH_SHA256" \
+  --arg droidspaces_posix_mqueue_patch "$DROIDSPACES_POSIX_PATCH_FILE" \
+  --arg droidspaces_posix_mqueue_patch_sha256 "$DROIDSPACES_POSIX_PATCH_SHA256" \
+  --argjson droidspaces_sysvipc_patch_skipped "$([[ "$DROIDSPACES_ABI_PATCH_SKIPPED" == 1 ]] && echo true || echo false)" \
+  --argjson droidspaces_posix_mqueue_patch_skipped "$([[ "$DROIDSPACES_POSIX_PATCH_SKIPPED" == 1 ]] && echo true || echo false)" \
+  --argjson droidspaces_ntsync "$([[ "$DROIDSPACES_NTSYNC" == "true" ]] && echo true || echo false)" \
+  --arg droidspaces_ntsync_patch "$DROIDSPACES_NTSYNC_PATCH" \
+  --arg droidspaces_ntsync_base_patch_sha256 "$DROIDSPACES_NTSYNC_BASE_SHA256" \
+  --arg droidspaces_ntsync_compat_patch_sha256 "$DROIDSPACES_NTSYNC_COMPAT_SHA256" \
   --arg anykernel_commit "$ANYKERNEL_COMMIT" \
   --arg anykernel_busybox_abi "$ANYKERNEL_BUSYBOX_ABI" \
   --arg anykernel_busybox_sha256 "$ANYKERNEL_BUSYBOX_SHA256" \
@@ -206,7 +217,6 @@ jq -n \
     device_kernel_make_flags: ($kernel_make_flags | split(" ") | map(select(length > 0))),
     rom_gki_module_compat: $rom_gki_module_compat,
     root_solution: $root_solution,
-    kpm_enabled: $kpm_enabled,
     kernelsu_repository: $ksu_repo,
     kernelsu_ref: $ksu_ref,
     kernelsu_commit: $ksu_commit,
@@ -216,10 +226,20 @@ jq -n \
     nomount_ref: $nomount_ref,
     nomount_commit: $nomount_commit,
     nomount_version: $nomount_version,
-    zeromount_patch_repository: $zeromount_repo,
-    zeromount_patch_commit: $zeromount_commit,
-    zeromount_gki_tag: $zeromount_gki_tag,
-    zeromount_patch_sha256: $zeromount_patch_sha256,
+    droidspaces_slot: $droidspaces_slot,
+    droidspaces_enabled: $droidspaces_enabled,
+    droidspaces_patch_commit: $droidspaces_patch_commit,
+    droidspaces_kernel_series: $droidspaces_kernel_series,
+    droidspaces_sysvipc_patch: $droidspaces_sysvipc_patch,
+    droidspaces_sysvipc_patch_sha256: $droidspaces_sysvipc_patch_sha256,
+    droidspaces_posix_mqueue_patch: $droidspaces_posix_mqueue_patch,
+    droidspaces_posix_mqueue_patch_sha256: $droidspaces_posix_mqueue_patch_sha256,
+    droidspaces_sysvipc_patch_skipped: $droidspaces_sysvipc_patch_skipped,
+    droidspaces_posix_mqueue_patch_skipped: $droidspaces_posix_mqueue_patch_skipped,
+    droidspaces_ntsync: $droidspaces_ntsync,
+    droidspaces_ntsync_patch: $droidspaces_ntsync_patch,
+    droidspaces_ntsync_base_patch_sha256: $droidspaces_ntsync_base_patch_sha256,
+    droidspaces_ntsync_compat_patch_sha256: $droidspaces_ntsync_compat_patch_sha256,
     anykernel_commit: $anykernel_commit,
     anykernel_busybox_abi: $anykernel_busybox_abi,
     anykernel_busybox_sha256: $anykernel_busybox_sha256,
@@ -244,15 +264,21 @@ cp "${SOC}/out/arch/arm64/boot/Image" "${ASSET_DIR}/${IMAGE_ASSET}"
 
 SUSFS_NOTE="disabled"
 NOMOUNT_NOTE="disabled"
-ZEROMOUNT_NOTE="disabled"
+DROIDSPACES_NOTE="disabled"
 if [[ -n "$SUSFS_VERSION" ]]; then
   SUSFS_NOTE="v${SUSFS_VERSION} (${SUSFS_REF}, ${SUSFS_COMMIT})"
 fi
 if [[ -n "$NOMOUNT_VERSION" ]]; then
   NOMOUNT_NOTE="v${NOMOUNT_VERSION} (${NOMOUNT_REF}, ${NOMOUNT_COMMIT})"
 fi
-if [[ -n "$ZEROMOUNT_COMMIT" ]]; then
-  ZEROMOUNT_NOTE="${ZEROMOUNT_GKI_TAG} (${ZEROMOUNT_COMMIT}, sha256:${ZEROMOUNT_PATCH_SHA256})"
+if [[ "$DROIDSPACES_SLOT" != "off" ]]; then
+  DROIDSPACES_NOTE="kABI slot ${DROIDSPACES_SLOT} on kernel ${DROIDSPACES_SERIES} (${DROIDSPACES_PATCH_FILE}, sha256:${DROIDSPACES_PATCH_SHA256}, patches:${DROIDSPACES_COMMIT})"
+  if [[ -n "$DROIDSPACES_POSIX_PATCH_FILE" ]]; then
+    DROIDSPACES_NOTE="${DROIDSPACES_NOTE}; POSIX_MQUEUE ${DROIDSPACES_POSIX_PATCH_FILE} (sha256:${DROIDSPACES_POSIX_PATCH_SHA256})"
+  fi
+  if [[ "$DROIDSPACES_NTSYNC" == "true" ]]; then
+    DROIDSPACES_NOTE="${DROIDSPACES_NOTE}; NTSync ${DROIDSPACES_NTSYNC_PATCH} (sha256:${DROIDSPACES_NTSYNC_COMPAT_SHA256})"
+  fi
 fi
 
 cat > "$ASSET_DIR/release-notes.md" <<EOF_NOTES
@@ -271,10 +297,9 @@ cat > "$ASSET_DIR/release-notes.md" <<EOF_NOTES
 - ROM GKI module compatibility: ${ROM_GKI_MODULE_COMPAT}
 - Root solution: ${KSU_TYPE}
 - KernelSU source: ${KSU_REPO:-disabled} (${KSU_REF:-none}, ${KSU_COMMIT:-none})
-- KPM: ${KPM_ENABLED}
 - SUSFS: ${SUSFS_NOTE}
 - NoMount: ${NOMOUNT_NOTE}
-- ZeroMount: ${ZEROMOUNT_NOTE}
+- Droidspaces: ${DROIDSPACES_NOTE}
 - AnyKernel BusyBox: ${ANYKERNEL_BUSYBOX_ABI} (sha256:${ANYKERNEL_BUSYBOX_SHA256})
 - AnyKernel MagiskBoot: v${MAGISK_TOOLS_VERSION} (sha256:${ANYKERNEL_MAGISKBOOT_SHA256})
 

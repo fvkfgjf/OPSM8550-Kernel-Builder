@@ -21,9 +21,37 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 INPUT_KERNEL_BRANCH="${INPUT_KERNEL_BRANCH:-}"
 INPUT_ROM_GKI_MODULE_COMPAT="${INPUT_ROM_GKI_MODULE_COMPAT:-Strict GKI module checks (default)}"
+INPUT_DROIDSPACES="${INPUT_DROIDSPACES:-off}"
+INPUT_DROIDSPACES_NTSYNC="${INPUT_DROIDSPACES_NTSYNC:-false}"
 
 resolve_build_profile "$INPUT_BUILD_PROFILE"
 resolve_root_solution "$INPUT_ROOT_SOLUTION"
+
+case "$INPUT_DROIDSPACES" in
+  off|678|123|345) ;;
+  *)
+    echo "::error::Unsupported Droidspaces kABI slot: $INPUT_DROIDSPACES"
+    exit 1
+    ;;
+esac
+DROIDSPACES_SLOT="$INPUT_DROIDSPACES"
+DROIDSPACES_SLOT_NAME="$(droidspaces_slot_name "$DROIDSPACES_SLOT")"
+DROIDSPACES_ENABLED=0
+if [[ "$DROIDSPACES_SLOT" != "off" ]]; then
+  DROIDSPACES_ENABLED=1
+fi
+
+case "$INPUT_DROIDSPACES_NTSYNC" in
+  true|false) ;;
+  *)
+    echo "::error::Invalid Droidspaces NTSync value: $INPUT_DROIDSPACES_NTSYNC"
+    exit 1
+    ;;
+esac
+if [[ "$INPUT_DROIDSPACES_NTSYNC" == "true" && "$DROIDSPACES_ENABLED" -ne 1 ]]; then
+  echo "::error::NTSync support requires Droidspaces to be enabled (slot 678, 123, or 345)."
+  exit 1
+fi
 
 case "$INPUT_ROM_GKI_MODULE_COMPAT" in
   "Strict GKI module checks (default)") ROM_GKI_MODULE_COMPAT=0 ;;
@@ -96,54 +124,16 @@ KSU_REF=""
 KSU_COMMIT=""
 case "$KSU_TYPE" in
   None) ;;
-  Official-KernelSU)
-    KSU_REPO="https://github.com/tiann/KernelSU.git"
-    KSU_REF="main"
-    ;;
-  KernelSU-Next)
-    KSU_REPO="https://github.com/KernelSU-Next/KernelSU-Next.git"
-    KSU_REF="dev"
-    ;;
-  KernelSU-Next-with-susfs|KernelSU-Next-with-susfs-nomount|KernelSU-Next-with-susfs-zeromount)
-    # The official dev branch does not carry the KernelSU-side SUSFS hooks.
-    # This branch tracks it and provides the matching in-tree integration.
-    KSU_REPO="https://github.com/pershoot/KernelSU-Next.git"
-    KSU_REF="dev-susfs"
-    ;;
-  KowSU)
-    KSU_REPO="https://github.com/KOWX712/KernelSU.git"
-    KSU_REF="master"
-    ;;
-  SukiSU-Ultra-with-KPM|SukiSU-Ultra-with-susfs-KPM|SukiSU-Ultra-with-susfs-nomount-KPM|SukiSU-Ultra-with-susfs-zeromount-KPM)
-    KSU_REPO="https://github.com/SukiSU-Ultra/SukiSU-Ultra.git"
-    KSU_REF="main"
-    if [[ "$KSU_TYPE" == *susfs* ]]; then
-      # The October main tree changed the hook ABI beyond our guarded SUSFS
-      # patches. Pin the revision that passed the full SUSFS/NoMount/KPM build.
-      KSU_REF="7fbbb1f12e2410b69c8ebf958be84f165b8d0c93"
-      KSU_COMMIT="$KSU_REF"
-    fi
-    ;;
-  ReSukiSU*)
-    KSU_REPO="https://github.com/ReSukiSU/ReSukiSU.git"
-    KSU_REF="main"
-    if [[ "$KSU_TYPE" == *susfs* ]]; then
-      # Latest main suspends SUSFS builds until its SELinux hooks are updated.
-      # Retain the revision that passed the full three-variant build on Sep 27.
-      KSU_REF="fa8311f632a215b5381ec644627c6198d1e8a13e"
-      KSU_COMMIT="$KSU_REF"
-    fi
+  BakaSU*)
+    # BakaSU is the only supported root solution. Its current main already
+    # carries the native SUSFS inline-hook runtime, so every preset is pinned
+    # to the tested revision for reproducible builds. Advance this pin only
+    # after a validation run against the new revision passes.
+    KSU_REPO="https://github.com/Baka-SU/BakaSU.git"
+    KSU_REF="b2c595ddfa64b685e5a144ad37b7c95f912fb92a"
+    KSU_COMMIT="$KSU_REF"
     ;;
 esac
-
-if [[ -n "$KSU_REPO" && -z "$KSU_COMMIT" ]]; then
-  KSU_COMMIT="$(git_ls_remote_retry --exit-code "$KSU_REPO" "refs/heads/${KSU_REF}" \
-    | awk 'NR == 1 {print $1}')"
-  if [[ ! "$KSU_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
-    echo "::error::Could not resolve $KSU_REPO branch '$KSU_REF' to a commit."
-    exit 1
-  fi
-fi
 
 SUSFS_REPO="https://gitlab.com/simonpunk/susfs4ksu.git"
 SUSFS_REF=""
@@ -153,36 +143,22 @@ SUSFS_MIN_VERSION=""
 if [[ "$KSU_TYPE" == *susfs* ]]; then
   SUSFS_MIN_VERSION="2.2.0"
   resolve_susfs_settings "$SOC" "$KERNEL_BRANCH"
-  case "$KSU_TYPE" in
-    SukiSU-Ultra-with-susfs-KPM|SukiSU-Ultra-with-susfs-nomount-KPM|SukiSU-Ultra-with-susfs-zeromount-KPM)
-      SUSFS_COMMIT="$(sukisu_compatible_susfs_commit "$SUSFS_REF")"
-      echo "::notice::Using SukiSU-compatible SUSFS v2.3.0 commit $SUSFS_COMMIT for $SUSFS_REF."
-      ;;
-    *)
-      SUSFS_COMMIT="$(git_ls_remote_retry --exit-code "$SUSFS_REPO" "refs/heads/${SUSFS_REF}" \
-        | awk 'NR == 1 {print $1}')"
-      ;;
-  esac
+  SUSFS_COMMIT="$(git_ls_remote_retry --exit-code "$SUSFS_REPO" "refs/heads/${SUSFS_REF}" \
+    | awk 'NR == 1 {print $1}')"
   if [[ ! "$SUSFS_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
     echo "::error::Could not resolve susfs branch '$SUSFS_REF' to a commit."
     exit 1
   fi
 fi
 
-ZEROMOUNT_REPO="https://github.com/troy896/Super-Builders.git"
-ZEROMOUNT_COMMIT=""
-ZEROMOUNT_GKI_TAG=""
-if [[ "$KSU_TYPE" == *zeromount* ]]; then
-  ZEROMOUNT_COMMIT="2978dcad87dc7055e2e4596c603313c553a9a4b4"
-  ZEROMOUNT_GKI_TAG="${SUSFS_REF#gki-}"
-  case "$ZEROMOUNT_GKI_TAG" in
-    android13-5.10|android13-5.15|android14-5.15|android14-6.1) ;;
-    *)
-      echo "::error::No ZeroMount patch mapping exists for SUSFS target '$SUSFS_REF'."
-      exit 1
-      ;;
-  esac
-fi
+# Droidspaces container support. The upstream patch set is resolved to exact
+# commits so that the kABI slot patches and their config set cannot change
+# underneath an otherwise identical build. NTSync patches are optional and only
+# used when explicitly requested.
+DROIDSPACES_REPO="https://github.com/ravindu644/Droidspaces-OSS.git"
+DROIDSPACES_COMMIT="9cf13113f0bbcc6c86d76dcf20647ffca8a30647"
+DROIDSPACES_NTSYNC_REPO="https://github.com/Goldzxcbug/Droidspaces_Kernel_patch.git"
+DROIDSPACES_NTSYNC_COMMIT="9ce4f6d896e0fbc266f1a058e048fb95fa3ceef0"
 
 NOMOUNT_REPO="https://github.com/maxsteeel/nomount.git"
 NOMOUNT_REF=""
@@ -282,9 +258,14 @@ esac
   echo "SUSFS_COMMIT=$SUSFS_COMMIT"
   echo "SUSFS_PATCH_FILE=$SUSFS_PATCH_FILE"
   echo "SUSFS_MIN_VERSION=$SUSFS_MIN_VERSION"
-  echo "ZEROMOUNT_REPO=$ZEROMOUNT_REPO"
-  echo "ZEROMOUNT_COMMIT=$ZEROMOUNT_COMMIT"
-  echo "ZEROMOUNT_GKI_TAG=$ZEROMOUNT_GKI_TAG"
+  echo "DROIDSPACES_SLOT=$DROIDSPACES_SLOT"
+  echo "DROIDSPACES_SLOT_NAME=$DROIDSPACES_SLOT_NAME"
+  echo "DROIDSPACES_ENABLED=$DROIDSPACES_ENABLED"
+  echo "DROIDSPACES_REPO=$DROIDSPACES_REPO"
+  echo "DROIDSPACES_COMMIT=$DROIDSPACES_COMMIT"
+  echo "DROIDSPACES_NTSYNC=$INPUT_DROIDSPACES_NTSYNC"
+  echo "DROIDSPACES_NTSYNC_REPO=$DROIDSPACES_NTSYNC_REPO"
+  echo "DROIDSPACES_NTSYNC_COMMIT=$DROIDSPACES_NTSYNC_COMMIT"
   echo "NOMOUNT_REPO=$NOMOUNT_REPO"
   echo "NOMOUNT_REF=$NOMOUNT_REF"
   echo "NOMOUNT_COMMIT=$NOMOUNT_COMMIT"
@@ -318,8 +299,11 @@ esac
   echo "susfs_ref=$SUSFS_REF"
   echo "susfs_commit=$SUSFS_COMMIT"
   echo "susfs_min_version=$SUSFS_MIN_VERSION"
-  echo "zeromount_commit=$ZEROMOUNT_COMMIT"
-  echo "zeromount_gki_tag=$ZEROMOUNT_GKI_TAG"
+  echo "droidspaces_slot=$DROIDSPACES_SLOT"
+  echo "droidspaces_slot_name=$DROIDSPACES_SLOT_NAME"
+  echo "droidspaces_enabled=$DROIDSPACES_ENABLED"
+  echo "droidspaces_commit=$DROIDSPACES_COMMIT"
+  echo "droidspaces_ntsync=$INPUT_DROIDSPACES_NTSYNC"
   echo "nomount_ref=$NOMOUNT_REF"
   echo "nomount_commit=$NOMOUNT_COMMIT"
   echo "anykernel_commit=$ANYKERNEL_COMMIT"
@@ -356,11 +340,11 @@ esac
   if [[ -n "$NOMOUNT_REF" ]]; then
     echo "- NoMount: $NOMOUNT_REF (\`${NOMOUNT_COMMIT}\`, experimental)"
   fi
-  if [[ -n "$ZEROMOUNT_COMMIT" ]]; then
-    echo "- ZeroMount: $ZEROMOUNT_GKI_TAG (\`${ZEROMOUNT_COMMIT}\`, experimental)"
-  fi
-  if [[ "$KSU_TYPE" == *KPM* ]]; then
-    echo "- KPM: enabled (experimental)"
+  if [[ "$DROIDSPACES_ENABLED" -eq 1 ]]; then
+    echo "- Droidspaces: kABI slot ${DROIDSPACES_SLOT} (patch root \`${DROIDSPACES_COMMIT}\`)"
+    if [[ "$INPUT_DROIDSPACES_NTSYNC" == "true" ]]; then
+      echo "- Droidspaces NTSync: enabled (experimental, \`${DROIDSPACES_NTSYNC_COMMIT}\`)"
+    fi
   fi
   echo "- AnyKernel3 commit: \`${ANYKERNEL_COMMIT}\`"
 } >> "$GITHUB_STEP_SUMMARY"

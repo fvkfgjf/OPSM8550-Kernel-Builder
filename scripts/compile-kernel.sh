@@ -5,6 +5,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/profile-data.sh
+. "${SCRIPT_DIR}/lib/profile-data.sh"
 # shellcheck source=lib/git-helpers.sh
 . "${SCRIPT_DIR}/lib/git-helpers.sh"
 # shellcheck source=lib/kernel-helpers.sh
@@ -15,8 +17,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "${SCRIPT_DIR}/lib/susfs-apply.sh"
 # shellcheck source=lib/nomount-setup.sh
 . "${SCRIPT_DIR}/lib/nomount-setup.sh"
-# shellcheck source=lib/zeromount-setup.sh
-. "${SCRIPT_DIR}/lib/zeromount-setup.sh"
+# shellcheck source=lib/droidspaces-setup.sh
+. "${SCRIPT_DIR}/lib/droidspaces-setup.sh"
 # shellcheck source=lib/verify.sh
 . "${SCRIPT_DIR}/lib/verify.sh"
 
@@ -95,6 +97,13 @@ mkdir -p "${CCACHE_DIR}"
 
 cd "${SOC}"
 
+ACTIVE_BUILD_CONFIGS="${BUILD_CONFIGS}"
+if [[ "$SOURCE_LAYOUT" == "oneplus-official" ]]; then
+  ACTIVE_BUILD_CONFIGS="vendor/${OFFICIAL_BUILD_TARGET}_GKI.config"
+fi
+export ACTIVE_BUILD_CONFIGS
+read -r -a ACTIVE_CONFIG_ARRAY <<< "$ACTIVE_BUILD_CONFIGS"
+
 SOURCE_DATE_EPOCH="$(git show -s --format=%ct "$KERNEL_COMMIT")"
 export SOURCE_DATE_EPOCH
 export KBUILD_BUILD_TIMESTAMP
@@ -137,24 +146,12 @@ EXTRACT_CERT_SOURCE="$(detect_extract_cert_source)" || {
 repair_extract_cert_key_pass_guard "$EXTRACT_CERT_SOURCE"
 install_ksu_variant "${KSU_TYPE}"
 
-if [[ "$KSU_TYPE" == *KPM* ]]; then
-  verify_kpm_source_integration "${KSU_KERNEL_DIR}"
-fi
-
 if [[ "$KSU_TYPE" == *susfs* ]]; then
   : "${SUSFS_REF:?}"
   : "${SUSFS_COMMIT:?}"
   : "${SUSFS_PATCH_FILE:?}"
   apply_susfs_full "$SUSFS_REF" "$SUSFS_COMMIT" "$SUSFS_PATCH_FILE"
   verify_susfs_source_integration "${KSU_KERNEL_DIR}"
-fi
-
-if [[ "$KSU_TYPE" == *zeromount* ]]; then
-  : "${ZEROMOUNT_REPO:?}"
-  : "${ZEROMOUNT_COMMIT:?}"
-  : "${ZEROMOUNT_GKI_TAG:?}"
-  install_zeromount "$ZEROMOUNT_REPO" "$ZEROMOUNT_COMMIT" "$ZEROMOUNT_GKI_TAG"
-  verify_zeromount_source_integration
 fi
 
 if [[ "$KSU_TYPE" == *nomount* ]]; then
@@ -165,16 +162,27 @@ if [[ "$KSU_TYPE" == *nomount* ]]; then
   verify_nomount_source_integration
 fi
 
+if [[ "${DROIDSPACES_SLOT:-off}" != "off" ]]; then
+  : "${DROIDSPACES_REPO:?}"
+  : "${DROIDSPACES_COMMIT:?}"
+  install_droidspaces "$DROIDSPACES_REPO" "$DROIDSPACES_COMMIT" "$DROIDSPACES_SLOT"
+  verify_droidspaces_source_integration
+  if [[ "${DROIDSPACES_NTSYNC:-false}" == "true" ]]; then
+    : "${DROIDSPACES_NTSYNC_REPO:?}"
+    : "${DROIDSPACES_NTSYNC_COMMIT:?}"
+    install_droidspaces_ntsync \
+      "$DROIDSPACES_NTSYNC_REPO" \
+      "$DROIDSPACES_NTSYNC_COMMIT" \
+      "$DROIDSPACES_SERIES" \
+      "${SUPPORTED_ANDROID_VERSIONS:-}"
+    verify_droidspaces_ntsync_source_integration
+  fi
+fi
+
 # Match the ROM kernel's CONFIG_LOCALVERSION_AUTO result without inheriting the
 # intentionally dirty integration worktree. Vendor modules include this release
 # string in vermagic and fail during early boot when the source identity is lost.
 write_kernel_scmversion "$KERNEL_COMMIT"
-
-ACTIVE_BUILD_CONFIGS="${BUILD_CONFIGS}"
-if [[ "$SOURCE_LAYOUT" == "oneplus-official" ]]; then
-  ACTIVE_BUILD_CONFIGS="vendor/${OFFICIAL_BUILD_TARGET}_GKI.config"
-fi
-read -r -a ACTIVE_CONFIG_ARRAY <<< "$ACTIVE_BUILD_CONFIGS"
 
 BUILD_PHASE="config generation"
 apply_variant_configs arch/arm64/configs/gki_defconfig
@@ -205,23 +213,21 @@ if [[ "$KSU_TYPE" == *susfs* ]]; then
   require_config_enabled  out/.config CONFIG_KSU_SUSFS_SUS_MAP
   require_config_enabled  out/.config CONFIG_KSU_SUSFS_OPEN_REDIRECT
   require_config_disabled out/.config CONFIG_KSU_MANUAL_HOOK
-  if [[ "$KSU_TYPE" == SukiSU-Ultra-with-susfs* ]]; then
-    require_config_enabled out/.config CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
-  else
-    require_config_disabled out/.config CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
-  fi
+  require_config_disabled out/.config CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
 fi
 if [[ "$KSU_TYPE" == *nomount* ]]; then
   require_config_enabled out/.config CONFIG_KEYS
   require_config_enabled out/.config CONFIG_NOMOUNT
 fi
-if [[ "$KSU_TYPE" == *zeromount* ]]; then
-  require_config_enabled out/.config CONFIG_ZEROMOUNT
-fi
-if [[ "$KSU_TYPE" == *KPM* ]]; then
-  require_config_enabled out/.config CONFIG_KPM
-  require_config_enabled out/.config CONFIG_KALLSYMS
-  require_config_enabled out/.config CONFIG_KALLSYMS_ALL
+if [[ "${DROIDSPACES_SLOT:-off}" != "off" ]]; then
+  require_config_enabled out/.config CONFIG_SYSVIPC
+  require_config_enabled out/.config CONFIG_POSIX_MQUEUE
+  require_config_enabled out/.config CONFIG_IPC_NS
+  require_config_enabled out/.config CONFIG_PID_NS
+  require_config_enabled out/.config CONFIG_DEVTMPFS
+  if [[ "${DROIDSPACES_NTSYNC:-false}" == "true" ]]; then
+    require_config_enabled out/.config CONFIG_NTSYNC
+  fi
 fi
 
 CONFIG_SECONDS=$(($(date +%s) - CONFIG_STARTED_AT))
@@ -254,24 +260,11 @@ if [[ "$BUILD_MODE" == "Patch/config validation only" ]]; then
   if [[ "$KSU_TYPE" == *nomount* ]]; then
     SMOKE_TARGETS+=("${NOMOUNT_FS_DIR}/nomount/nomount.o")
   fi
-  if [[ "$KSU_TYPE" == *zeromount* ]]; then
+  if [[ "${DROIDSPACES_SLOT:-off}" != "off" ]]; then
     SMOKE_TARGETS+=(
-      fs/zeromount.o
-      fs/namei.o
-      fs/readdir.o
-      fs/d_path.o
-      fs/stat.o
-      fs/statfs.o
-      fs/xattr.o
-      fs/proc/base.o
+      ipc/
+      kernel/nsproxy.o
     )
-  fi
-  if [[ "$KSU_TYPE" == *KPM* ]]; then
-    if [[ "$KSU_TYPE" != *susfs* ]]; then
-      SMOKE_TARGETS+=("${KSU_DRIVER_DIR}/kernelsu/")
-    fi
-    # Building the KernelSU directory includes all CONFIG_KPM objects as well
-    # as its SUSFS compatibility sources and symbol resolver.
   fi
 
   if [[ "${#SMOKE_TARGETS[@]}" -gt 0 ]]; then
@@ -286,7 +279,7 @@ if [[ "$BUILD_MODE" == "Patch/config validation only" ]]; then
     fi
     if ! make -j"$(nproc)" "${MAKE_ARGS[@]}" "${SMOKE_TARGETS[@]}" 2>&1 | tee integration-smoke.log; then
       COMPILE_SECONDS=$((COMPILE_SECONDS + $(date +%s) - COMPILE_STARTED_AT))
-      echo "::error::SUSFS/NoMount/ZeroMount/KPM integration object smoke compile failed."
+      echo "::error::SUSFS/NoMount/Droidspaces integration object smoke compile failed."
       exit 1
     fi
     COMPILE_SECONDS=$((COMPILE_SECONDS + $(date +%s) - COMPILE_STARTED_AT))
@@ -296,11 +289,8 @@ if [[ "$BUILD_MODE" == "Patch/config validation only" ]]; then
     if [[ "$KSU_TYPE" == *nomount* ]]; then
       verify_nomount_binary_presence
     fi
-    if [[ "$KSU_TYPE" == *zeromount* ]]; then
-      verify_zeromount_binary_presence
-    fi
-    if [[ "$KSU_TYPE" == *KPM* ]]; then
-      verify_kpm_binary_presence
+    if [[ "${DROIDSPACES_SLOT:-off}" != "off" ]]; then
+      verify_droidspaces_binary_presence
     fi
   fi
 
@@ -348,23 +338,18 @@ echo "[+] Kernel release identity verified: ${KERNEL_RELEASE}"
 if [[ "$KSU_TYPE" == *susfs* ]]; then
   echo "==== SUSFS CONFIG SNAPSHOT ===="
   grep -E '^CONFIG_KSU_SUSFS|^CONFIG_KSU_MANUAL_HOOK|^CONFIG_TMPFS_XATTR=|^CONFIG_NOMOUNT=' out/.config || true
-  if [[ "$KSU_TYPE" == ReSukiSU* ]]; then
-    verify_resukisu_susfs_hook_mode
+  if [[ "$KSU_TYPE" == BakaSU* ]]; then
+    verify_bakasu_susfs_hook_mode
   fi
   verify_susfs_binary_presence
 fi
 if [[ "$KSU_TYPE" == *nomount* ]]; then
   verify_nomount_binary_presence
 fi
-if [[ "$KSU_TYPE" == *zeromount* ]]; then
-  echo "==== ZEROMOUNT CONFIG SNAPSHOT ===="
-  grep -E '^CONFIG_ZEROMOUNT=|^CONFIG_KSU_SUSFS=' out/.config || true
-  verify_zeromount_binary_presence
-fi
-if [[ "$KSU_TYPE" == *KPM* ]]; then
-  echo "==== KPM CONFIG SNAPSHOT ===="
-  grep -E '^CONFIG_KPM=|^CONFIG_KALLSYMS(_ALL)?=' out/.config || true
-  verify_kpm_binary_presence
+if [[ "${DROIDSPACES_SLOT:-off}" != "off" ]]; then
+  echo "==== DROIDSPACES CONFIG SNAPSHOT ===="
+  grep -E '^CONFIG_(SYSVIPC|POSIX_MQUEUE|IPC_NS|PID_NS|DEVTMPFS|NTSYNC|USER_NS)=' out/.config || true
+  verify_droidspaces_binary_presence
 fi
 
 ccache --show-stats || true

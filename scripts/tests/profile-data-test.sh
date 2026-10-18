@@ -10,8 +10,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "${SCRIPT_DIR}/../lib/anykernel-helpers.sh"
 # shellcheck source=../lib/nomount-setup.sh
 . "${SCRIPT_DIR}/../lib/nomount-setup.sh"
-# shellcheck source=../lib/zeromount-setup.sh
-. "${SCRIPT_DIR}/../lib/zeromount-setup.sh"
+# shellcheck source=../lib/droidspaces-setup.sh
+. "${SCRIPT_DIR}/../lib/droidspaces-setup.sh"
 # shellcheck source=../lib/susfs-apply.sh
 . "${SCRIPT_DIR}/../lib/susfs-apply.sh"
 # shellcheck source=../lib/kernel-helpers.sh
@@ -44,9 +44,7 @@ RESOLVER_SCRIPT="${SCRIPT_DIR}/../resolve-profile.sh"
 KSU_SETUP_SCRIPT="${SCRIPT_DIR}/../lib/ksu-setup.sh"
 GIT_HELPERS_SCRIPT="${SCRIPT_DIR}/../lib/git-helpers.sh"
 SUSFS_APPLY_SCRIPT="${SCRIPT_DIR}/../lib/susfs-apply.sh"
-ZEROMOUNT_SETUP_SCRIPT="${SCRIPT_DIR}/../lib/zeromount-setup.sh"
-SUKISU_SUSFS_COMPAT_PATCH="${SCRIPT_DIR}/../patches/sukisu-susfs-core-init-compat.patch"
-SUKISU_SUSFS_POLICY_COMPAT_PATCH="${SCRIPT_DIR}/../patches/sukisu-susfs-policy-compat.patch"
+DROIDSPACES_SETUP_SCRIPT="${SCRIPT_DIR}/../lib/droidspaces-setup.sh"
 sh -n "$ANYKERNEL_TEMPLATE" || fail "AnyKernel device template has invalid shell syntax"
 for profile in "${profiles[@]}"; do
   grep -Fq -- "- ${profile}" "$WORKFLOW_FILE" \
@@ -111,12 +109,10 @@ grep -Fq 'install_anykernel_template "$ANYKERNEL_TEMPLATE" "$ANYKERNEL_SCRIPT"' 
   || fail "AnyKernel packaging must install the device-specific flash template"
 grep -Fq 'patch_anykernel_app_flash_staging "$ANYKERNEL_UPDATE_BINARY"' "$ANYKERNEL_PACKAGE_SCRIPT" \
   || fail "AnyKernel packaging must move app-triggered flashes out of app-private data"
-grep -Fq 'install_anykernel_arm64_busybox "$KSU_ARM64_BUSYBOX" "AnyKernel3/tools/busybox"' "$ANYKERNEL_PACKAGE_SCRIPT" \
-  || fail "KPM packaging must replace AnyKernel's legacy ARM BusyBox"
 grep -Fq 'install_anykernel_arm64_magiskboot \' "$ANYKERNEL_PACKAGE_SCRIPT" \
-  || fail "KPM packaging must replace AnyKernel's legacy ARM MagiskBoot"
+  || fail "arm64-only packaging must replace AnyKernel's legacy ARM MagiskBoot"
 grep -Fq 'prepare_anykernel_arm64_toolset "AnyKernel3/tools"' "$ANYKERNEL_PACKAGE_SCRIPT" \
-  || fail "KPM packaging must reject remaining non-AArch64 runtime tools"
+  || fail "arm64-only packaging must reject remaining non-AArch64 runtime tools"
 grep -Fq 'add_anykernel_preflight_diagnostics \' "$ANYKERNEL_PACKAGE_SCRIPT" \
   || fail "AnyKernel packaging must report the device and BusyBox ABIs"
 grep -Fq 'git checkout -q --force --detach FETCH_HEAD' "$ANYKERNEL_PACKAGE_SCRIPT" \
@@ -126,15 +122,11 @@ if grep -Fq 'Kernel-SU/AnyKernel3.git' "$RESOLVER_SCRIPT"; then
 fi
 grep -Fq 'profile: SM8650 | OnePlus 12 | crDroid' "$UPSTREAM_HEALTH_WORKFLOW" \
   || fail "upstream health must exercise the crDroid SM8650 certificate compatibility path"
-grep -Fq 'integration: SukiSU Ultra + SUSFS + NoMount + KPM (experimental)' "$UPSTREAM_HEALTH_WORKFLOW" \
-  || fail "upstream health must exercise the featured KPM integration"
-awk '
-  /integration: SukiSU Ultra \+ SUSFS \+ NoMount \+ KPM \(experimental\)/ { kpm = 1; next }
-  kpm && /profile: SM8650 \| OnePlus 12 \| crDroid/ { found = 1; exit }
-  kpm && /integration:/ { kpm = 0 }
-  END { exit !found }
-' "$UPSTREAM_HEALTH_WORKFLOW" \
-  || fail "upstream health must exercise KPM on the crDroid OnePlus 12 source"
+grep -Fq -- '- BakaSU + SUSFS + NoMount (experimental)' "$UPSTREAM_HEALTH_WORKFLOW" \
+  || fail "upstream health must exercise the BakaSU SUSFS/NoMount integration"
+if grep -Eq 'KernelSU-Next|SukiSU|KowSU|Official KernelSU|KPM' "$UPSTREAM_HEALTH_WORKFLOW"; then
+  fail "upstream health still exercises a removed root solution"
+fi
 
 expected_socs=(sm7550 sm7550 sm8450 sm8450 sm8550 sm8550 sm8550 sm8550 sm8550 sm8650 sm8650 sm8650)
 expected_upstream_socs=(sm8550 sm8550 sm8450 sm8450 sm8550 sm8550 sm8550 sm8550 sm8550 sm8650 sm8650 sm8650)
@@ -184,130 +176,112 @@ assert_eq "https://github.com/osm1019/android_kernel_oneplus_sm8550-modules.git"
 assert_eq "los" "$MODULES_BRANCH_OVERRIDE" "LunarisOS modules branch"
 assert_eq "lunarisos" "$SOURCE_SLUG" "LunarisOS source slug"
 
-resolve_root_solution "ReSukiSU + susfs"
-assert_eq "ReSukiSU-with-susfs" "$KSU_TYPE" "root mapping"
-resolve_root_solution "KernelSU-Next + SUSFS"
-assert_eq "KernelSU-Next-with-susfs" "$KSU_TYPE" "KernelSU-Next SUSFS root mapping"
-resolve_root_solution "KernelSU-Next + SUSFS + NoMount (experimental)"
-assert_eq "KernelSU-Next-with-susfs-nomount" "$KSU_TYPE" "KernelSU-Next NoMount root mapping"
-resolve_root_solution "KernelSU-Next + SUSFS + ZeroMount (experimental)"
-assert_eq "KernelSU-Next-with-susfs-zeromount" "$KSU_TYPE" "KernelSU-Next ZeroMount root mapping"
-resolve_root_solution "ReSukiSU + SUSFS + NoMount (experimental)"
-assert_eq "ReSukiSU-with-susfs-nomount" "$KSU_TYPE" "NoMount root mapping"
-resolve_root_solution "SukiSU Ultra + KPM (experimental)"
-assert_eq "SukiSU-Ultra-with-KPM" "$KSU_TYPE" "KPM root mapping"
-resolve_root_solution "SukiSU Ultra + SUSFS + KPM (experimental)"
-assert_eq "SukiSU-Ultra-with-susfs-KPM" "$KSU_TYPE" "SukiSU SUSFS/KPM root mapping"
-resolve_root_solution "SukiSU Ultra + SUSFS + NoMount + KPM (experimental)"
-assert_eq "SukiSU-Ultra-with-susfs-nomount-KPM" "$KSU_TYPE" "SukiSU SUSFS/NoMount/KPM root mapping"
-resolve_root_solution "SukiSU Ultra + SUSFS + ZeroMount + KPM (experimental)"
-assert_eq "SukiSU-Ultra-with-susfs-zeromount-KPM" "$KSU_TYPE" "SukiSU SUSFS/ZeroMount/KPM root mapping"
-resolve_root_solution "ReSukiSU + SUSFS + ZeroMount (experimental)"
-assert_eq "ReSukiSU-with-susfs-zeromount" "$KSU_TYPE" "ReSukiSU ZeroMount root mapping"
-grep -Fq -- '- ReSukiSU + SUSFS + NoMount (experimental)' "$WORKFLOW_FILE" \
-  || fail "workflow is missing the NoMount root option"
-grep -Fq -- '- KernelSU-Next + SUSFS' "$WORKFLOW_FILE" \
-  || fail "workflow is missing the KernelSU-Next SUSFS root option"
-grep -Fq -- '- KernelSU-Next + SUSFS + NoMount (experimental)' "$WORKFLOW_FILE" \
-  || fail "workflow is missing the KernelSU-Next NoMount root option"
-grep -Fq -- '- Build all 3 featured SUSFS variants (batch)' "$WORKFLOW_FILE" \
-  || fail "workflow is missing the three-variant batch root option"
-grep -Fq -- '- Build all 3 ZeroMount variants (batch)' "$WORKFLOW_FILE" \
-  || fail "workflow is missing the three-variant ZeroMount batch option"
+resolve_root_solution "BakaSU"
+assert_eq "BakaSU" "$KSU_TYPE" "BakaSU root mapping"
+resolve_root_solution "BakaSU + SUSFS"
+assert_eq "BakaSU-with-susfs" "$KSU_TYPE" "BakaSU SUSFS root mapping"
+resolve_root_solution "BakaSU + SUSFS + NoMount (experimental)"
+assert_eq "BakaSU-with-susfs-nomount" "$KSU_TYPE" "BakaSU NoMount root mapping"
+for retired_root_option in \
+  'Official KernelSU' \
+  'KernelSU-Next' \
+  'KernelSU-Next + SUSFS' \
+  'KernelSU-Next + SUSFS + NoMount (experimental)' \
+  'KowSU' \
+  'SukiSU Ultra + KPM (experimental)' \
+  'SukiSU Ultra + SUSFS + KPM (experimental)' \
+  'SukiSU Ultra + SUSFS + NoMount + KPM (experimental)' \
+  'ReSukiSU' \
+  'ReSukiSU + susfs' \
+  'ReSukiSU + SUSFS + NoMount (experimental)'; do
+  if resolve_root_solution "$retired_root_option" >/dev/null 2>&1; then
+    fail "removed root preset must be rejected: $retired_root_option"
+  fi
+done
+grep -Fq -- '- BakaSU' "$WORKFLOW_FILE" \
+  || fail "workflow is missing the BakaSU root option"
+grep -Fq -- '- BakaSU + SUSFS' "$WORKFLOW_FILE" \
+  || fail "workflow is missing the BakaSU SUSFS root option"
+grep -Fq -- '- BakaSU + SUSFS + NoMount (experimental)' "$WORKFLOW_FILE" \
+  || fail "workflow is missing the BakaSU NoMount root option"
+grep -Fq -- '- "678"' "$WORKFLOW_FILE" \
+  || fail "workflow is missing the Droidspaces kABI slot input"
+grep -Fq 'droidspaces_ntsync:' "$WORKFLOW_FILE" \
+  || fail "workflow is missing the Droidspaces NTSync input"
+for retired_option in ZeroMount KPM SukiSU KowSU 'KernelSU-Next' 'Official KernelSU'; do
+  if grep -Fq "$retired_option" "$WORKFLOW_FILE"; then
+    fail "workflow still offers a removed integration: $retired_option"
+  fi
+done
 grep -Fq 'name: Build ${{ matrix.root_solution }}' "$WORKFLOW_FILE" \
   || fail "workflow build job does not use the root-solution matrix"
-grep -Fq '"SukiSU Ultra + SUSFS + NoMount + KPM (experimental)","ReSukiSU + SUSFS + NoMount (experimental)","KernelSU-Next + SUSFS + NoMount (experimental)"' "$WORKFLOW_FILE" \
-  || fail "workflow featured SUSFS batch matrix does not contain all three NoMount variants"
-grep -Fq '"SukiSU Ultra + SUSFS + ZeroMount + KPM (experimental)","ReSukiSU + SUSFS + ZeroMount (experimental)","KernelSU-Next + SUSFS + ZeroMount (experimental)"' "$WORKFLOW_FILE" \
-  || fail "workflow batch matrix does not contain the three ZeroMount variants"
-grep -Fq 'ARTIFACT_NAME="kernel-package-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${KSU_TYPE}"' "$WORKFLOW_FILE" \
-  || fail "workflow package artifact names must be unique across the batch matrix"
-grep -Fq 'KSU_REPO="https://github.com/pershoot/KernelSU-Next.git"' "$RESOLVER_SCRIPT" \
-  || fail "KernelSU-Next SUSFS must resolve the compatible dev-susfs fork"
-grep -Fq 'KSU_REF="dev-susfs"' "$RESOLVER_SCRIPT" \
-  || fail "KernelSU-Next SUSFS must resolve the dev-susfs branch"
-grep -Fq 'KernelSU-Next-with-susfs|KernelSU-Next-with-susfs-nomount|KernelSU-Next-with-susfs-zeromount)' "$RESOLVER_SCRIPT" \
-  || fail "resolver does not route the KernelSU-Next NoMount preset to the SUSFS-compatible fork"
-grep -Fq '"KernelSU-Next-with-susfs"|"KernelSU-Next-with-susfs-nomount"|"KernelSU-Next-with-susfs-zeromount")' "$KSU_SETUP_SCRIPT" \
-  || fail "KernelSU setup does not install the SUSFS-compatible fork for the NoMount preset"
-grep -Fq -- '- SukiSU Ultra + KPM (experimental)' "$WORKFLOW_FILE" \
-  || fail "workflow is missing the KPM root option"
-grep -Fq -- '- SukiSU Ultra + SUSFS + KPM (experimental)' "$WORKFLOW_FILE" \
-  || fail "workflow is missing the combined SukiSU SUSFS/KPM root option"
-grep -Fq -- '- SukiSU Ultra + SUSFS + NoMount + KPM (experimental)' "$WORKFLOW_FILE" \
-  || fail "workflow is missing the combined SukiSU SUSFS/NoMount/KPM root option"
-grep -Fq -- '- SukiSU Ultra + SUSFS + NoMount + KPM (experimental)' "$UPSTREAM_HEALTH_WORKFLOW" \
-  || fail "upstream health is missing the combined SukiSU SUSFS/NoMount/KPM preset"
-grep -Fq -- '- KernelSU-Next + SUSFS + NoMount (experimental)' "$UPSTREAM_HEALTH_WORKFLOW" \
-  || fail "upstream health is missing KernelSU-Next NoMount"
-grep -Fq -- '- integration: KernelSU-Next + SUSFS + ZeroMount (experimental)' "$UPSTREAM_HEALTH_WORKFLOW" \
-  || fail "upstream health is missing KernelSU-Next ZeroMount"
-grep -Fq -- '- integration: ReSukiSU + SUSFS + ZeroMount (experimental)' "$UPSTREAM_HEALTH_WORKFLOW" \
-  || fail "upstream health is missing ReSukiSU ZeroMount"
-grep -Fq -- '- SukiSU Ultra + SUSFS + ZeroMount + KPM (experimental)' "$UPSTREAM_HEALTH_WORKFLOW" \
-  || fail "upstream health is missing SukiSU ZeroMount"
-grep -Fq 'SukiSU-Ultra-with-KPM|SukiSU-Ultra-with-susfs-KPM|SukiSU-Ultra-with-susfs-nomount-KPM|SukiSU-Ultra-with-susfs-zeromount-KPM)' "$RESOLVER_SCRIPT" \
-  || fail "resolver does not route all SukiSU presets to SukiSU Ultra"
-grep -Fq 'SUSFS_COMMIT="$(sukisu_compatible_susfs_commit "$SUSFS_REF")"' "$RESOLVER_SCRIPT" \
-  || fail "resolver does not use the SukiSU-compatible SUSFS commit map"
-grep -Fq '"SukiSU-Ultra-with-KPM"|"SukiSU-Ultra-with-susfs-KPM"|"SukiSU-Ultra-with-susfs-nomount-KPM"|"SukiSU-Ultra-with-susfs-zeromount-KPM")' "$KSU_SETUP_SCRIPT" \
-  || fail "KernelSU setup does not install SukiSU Ultra for all combined presets"
-grep -Fq 'ZEROMOUNT_COMMIT="2978dcad87dc7055e2e4596c603313c553a9a4b4"' "$RESOLVER_SCRIPT" \
-  || fail "ZeroMount patch source is not pinned to the tested commit"
-for zeromount_tag in android13-5.10 android13-5.15 android14-5.15 android14-6.1; do
-  [[ "$(zeromount_patch_sha256 "$zeromount_tag")" =~ ^[0-9a-f]{64}$ ]] \
-    || fail "ZeroMount checksum mapping is missing for $zeromount_tag"
+grep -Fq 'ARTIFACT_NAME="kernel-package-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${KSU_TYPE}${DROIDSPACES_SUFFIX}"' "$WORKFLOW_FILE" \
+  || fail "workflow package artifact names must include the root and Droidspaces mode"
+
+# Every root preset advertised by the workflow must resolve through the
+# mapping library, and only BakaSU presets may remain.
+root_solution_block="$(sed -n '/^      root_solution:/,/^      droidspaces:/p' "$WORKFLOW_FILE")"
+mapfile -t workflow_root_options < <(sed -n 's/^          - //p' <<< "$root_solution_block")
+assert_eq "4" "${#workflow_root_options[@]}" "workflow root option count"
+assert_eq "No root changes BakaSU BakaSU + SUSFS BakaSU + SUSFS + NoMount (experimental)" \
+  "${workflow_root_options[*]}" "workflow root options"
+for workflow_root_option in "${workflow_root_options[@]}"; do
+  resolve_root_solution "$workflow_root_option" \
+    || fail "workflow root option does not resolve: $workflow_root_option"
 done
-grep -Fq 'patch --dry-run --batch --forward --fuzz=3 -p1' "$ZEROMOUNT_SETUP_SCRIPT" \
-  || fail "ZeroMount integration must validate the whole patch before applying it"
-grep -Fq 'resolve_known_sukisu_susfs_rejects' "$SUSFS_APPLY_SCRIPT" \
-  || fail "SUSFS integration is missing the guarded SukiSU drift resolver"
-KSU_TYPE="SukiSU-Ultra-with-susfs-KPM"
-is_sukisu_susfs_variant || fail "SukiSU SUSFS/KPM preset must allow guarded SUSFS drift repair"
-KSU_TYPE="SukiSU-Ultra-with-susfs-nomount-KPM"
-is_sukisu_susfs_variant || fail "SukiSU SUSFS/NoMount/KPM preset must allow guarded SUSFS drift repair"
-KSU_TYPE="SukiSU-Ultra-with-susfs-zeromount-KPM"
-is_sukisu_susfs_variant || fail "SukiSU SUSFS/ZeroMount/KPM preset must allow guarded SUSFS drift repair"
-KSU_TYPE="SukiSU-Ultra-with-KPM"
-if is_sukisu_susfs_variant; then
-  fail "SukiSU KPM-only preset must not enter SUSFS drift repair"
+
+# The Droidspaces slot choices advertised by the workflow must match the
+# mapping library exactly.
+droidspaces_block="$(sed -n '/^      droidspaces:/,/^      droidspaces_ntsync:/p' "$WORKFLOW_FILE")"
+mapfile -t workflow_droidspaces_slots < <(sed -n 's/^          - "\(.*\)"$/\1/p' <<< "$droidspaces_block")
+mapfile -t mapped_droidspaces_slots < <(droidspaces_slot_choices)
+assert_eq "${mapped_droidspaces_slots[*]}" "${workflow_droidspaces_slots[*]}" \
+  "workflow Droidspaces slot choices"
+grep -Fq 'DROIDSPACES_SUFFIX="-droidspaces-${DROIDSPACES_SLOT}"' "$WORKFLOW_FILE" \
+  || fail "workflow package artifact names must include the Droidspaces mode"
+
+grep -Fq 'KSU_REPO="https://github.com/Baka-SU/BakaSU.git"' "$RESOLVER_SCRIPT" \
+  || fail "resolver must use the BakaSU repository"
+grep -Fq 'KSU_REF="b2c595ddfa64b685e5a144ad37b7c95f912fb92a"' "$RESOLVER_SCRIPT" \
+  || fail "resolver must pin the tested BakaSU revision"
+grep -Fq '"BakaSU"|"BakaSU-with-susfs"|"BakaSU-with-susfs-nomount")' "$KSU_SETUP_SCRIPT" \
+  || fail "KernelSU setup must install BakaSU for every preset"
+if grep -Fq 'tiann/KernelSU' "$RESOLVER_SCRIPT" "$KSU_SETUP_SCRIPT"; then
+  fail "resolver still references Official KernelSU"
 fi
-test -f "$SUKISU_SUSFS_COMPAT_PATCH" \
-  || fail "SUSFS integration is missing the guarded SukiSU compatibility patch"
-grep -Fq 'kernelsu-objs += infra/symbol_resolver.o' "$SUKISU_SUSFS_COMPAT_PATCH" \
-  || fail "SukiSU SUSFS/KPM compatibility patch does not restore the symbol resolver object"
-grep -Fq 'ksu_init_symbol_resolver();' "$SUKISU_SUSFS_COMPAT_PATCH" \
-  && fail "SukiSU SUSFS/KPM compatibility patch must preserve, not duplicate, resolver initialization"
-grep -Fq -- '-    ksu_late_loaded = (current->pid != 1);' "$SUKISU_SUSFS_COMPAT_PATCH" \
-  || fail "SukiSU SUSFS/KPM compatibility patch does not remove stale late-load initialization"
-grep -Fq -- '-bool ksu_bundled = false;' "$SUKISU_SUSFS_COMPAT_PATCH" \
-  || fail "SukiSU SUSFS/KPM compatibility patch does not remove stale bundled state"
-grep -Fq "ksu_(late_loaded|bundled)" "$SUSFS_APPLY_SCRIPT" \
-  || fail "SukiSU SUSFS drift resolver does not reject stale late-load state"
-test -f "$SUKISU_SUSFS_POLICY_COMPAT_PATCH" \
-  || fail "SUSFS integration is missing the guarded SukiSU policy compatibility patch"
-grep -Fq 'webview_zygote (controlled by feature policy)' "$SUKISU_SUSFS_POLICY_COMPAT_PATCH" \
-  || fail "SukiSU policy compatibility patch does not resolve kernel umount drift"
-grep -Fq 'ksu_get_manager_appid() == uid % PER_USER_RANGE' "$SUKISU_SUSFS_POLICY_COMPAT_PATCH" \
-  || fail "SukiSU policy compatibility patch does not resolve allowlist drift"
-grep -Fq 'kernel/feature/kernel_umount.c.rej' "$SUSFS_APPLY_SCRIPT" \
-  || fail "SukiSU drift resolver does not guard the kernel umount reject"
-grep -Fq 'kernel/policy/allowlist.c.rej' "$SUSFS_APPLY_SCRIPT" \
-  || fail "SukiSU drift resolver does not guard the allowlist reject"
-grep -Fq 'SukiSU KPM symbol resolver is not linked into kernelsu.o.' "${SCRIPT_DIR}/../lib/verify.sh" \
-  || fail "KPM source verification does not check symbol resolver linkage"
-grep -Fq '"${KSU_DRIVER_DIR}/kernelsu/"' "$COMPILE_SCRIPT" \
-  || fail "KPM smoke compilation does not build the composite KernelSU object"
-grep -Fq 'out/${KSU_DRIVER_DIR}/kernelsu/infra/symbol_resolver.o' "${SCRIPT_DIR}/../lib/verify.sh" \
-  || fail "KPM binary verification does not inspect the compiled symbol resolver object"
-grep -Fq 'local llvm_nm="${CLANG_ROOT:?}/llvm-nm"' "${SCRIPT_DIR}/../lib/verify.sh" \
-  || fail "KPM binary verification does not use the active LTO-aware LLVM symbol tool"
-grep -Fq 'toolchains/${CLANG_VERSION}/bin/llvm-nm' "$WORKFLOW_FILE" \
-  || fail "workflow does not validate the KPM symbol inspection tool"
-grep -Fq 'compiled symbol_resolver.o does not define find_kernel_symbol_exact' "${SCRIPT_DIR}/../lib/verify.sh" \
-  || fail "KPM binary verification does not require a defined symbol resolver"
-grep -Fq 'CONFIG_KPM CONFIG_KALLSYMS CONFIG_KALLSYMS_ALL' "${SCRIPT_DIR}/../lib/kernel-helpers.sh" \
-  || fail "KPM preset is missing required config values"
+if grep -Fq 'KernelSU-Next' "$RESOLVER_SCRIPT" "$KSU_SETUP_SCRIPT"; then
+  fail "resolver still references KernelSU-Next"
+fi
+if grep -Fq 'SukiSU' "$RESOLVER_SCRIPT" "$KSU_SETUP_SCRIPT" "$SUSFS_APPLY_SCRIPT"; then
+  fail "resolver still references SukiSU"
+fi
+if grep -Eq 'KPM' "$COMPILE_SCRIPT" "${SCRIPT_DIR}/../lib/verify.sh" "${SCRIPT_DIR}/../lib/kernel-helpers.sh"; then
+  fail "KPM integration is still wired into the build"
+fi
+
+grep -Fq 'DROIDSPACES_COMMIT="9cf13113f0bbcc6c86d76dcf20647ffca8a30647"' "$RESOLVER_SCRIPT" \
+  || fail "Droidspaces patch source is not pinned to the tested commit"
+grep -Fq 'DROIDSPACES_NTSYNC_COMMIT="9ce4f6d896e0fbc266f1a058e048fb95fa3ceef0"' "$RESOLVER_SCRIPT" \
+  || fail "Droidspaces NTSync patch source is not pinned to the tested commit"
+grep -Fq 'patch -p1 --dry-run --batch --forward --fuzz=3' "$DROIDSPACES_SETUP_SCRIPT" \
+  || fail "Droidspaces integration must validate the whole patch before applying it"
+grep -Fq 'droidspaces_config_enabled_in_inputs CONFIG_SYSVIPC' "$DROIDSPACES_SETUP_SCRIPT" \
+  || fail "Droidspaces integration must preserve an already enabled stock SYSVIPC ABI"
+grep -Fq 'droidspaces_config_enabled_in_inputs CONFIG_POSIX_MQUEUE' "$DROIDSPACES_SETUP_SCRIPT" \
+  || fail "Droidspaces integration must preserve an already enabled stock POSIX_MQUEUE ABI"
+grep -Fq -- '- BakaSU + SUSFS + NoMount (experimental)' "$UPSTREAM_HEALTH_WORKFLOW" \
+  || fail "upstream health is missing BakaSU NoMount"
+grep -Fq 'droidspaces: "678"' "$UPSTREAM_HEALTH_WORKFLOW" \
+  || fail "upstream health is missing the Droidspaces 5.10 slot coverage"
+grep -Fq 'droidspaces: "123"' "$UPSTREAM_HEALTH_WORKFLOW" \
+  || fail "upstream health is missing the Droidspaces 5.15 slot coverage"
+grep -Fq 'droidspaces: "345"' "$UPSTREAM_HEALTH_WORKFLOW" \
+  || fail "upstream health is missing the Droidspaces 6.1 slot coverage"
+grep -Fq 'droidspaces_ntsync: true' "$UPSTREAM_HEALTH_WORKFLOW" \
+  || fail "upstream health is missing the Droidspaces NTSync coverage"
+if grep -Fq 'ZeroMount' "$UPSTREAM_HEALTH_WORKFLOW"; then
+  fail "upstream health still exercises ZeroMount"
+fi
 
 resolve_clang_version "Recommended (auto-select based on branch)" "lineage-23.2"
 assert_eq "clang-r563880c" "$CLANG_VERSION" "LineageOS 23.2 clang"
@@ -341,20 +315,7 @@ for crdroid_soc in sm7550 sm8550 sm8650; do
   else
     assert_eq "gki-android14-5.15" "$SUSFS_REF" "crDroid 13 $crdroid_soc GKI base"
   fi
-  [[ "$(zeromount_patch_sha256 "${SUSFS_REF#gki-}")" =~ ^[0-9a-f]{64}$ ]] \
-    || fail "crDroid 13 $crdroid_soc ZeroMount patch mapping"
 done
-assert_eq "2c774fdb4f0aaa743598c1bec787f6c935574ed1" \
-  "$(sukisu_compatible_susfs_commit gki-android13-5.10)" "SukiSU Android 13 5.10 SUSFS pin"
-assert_eq "7af04b08f86a5f811cbea28805f96d52368e005f" \
-  "$(sukisu_compatible_susfs_commit gki-android13-5.15)" "SukiSU Android 13 5.15 SUSFS pin"
-assert_eq "aab99ba7693d94489fd32f1cc4c9d58396fffeee" \
-  "$(sukisu_compatible_susfs_commit gki-android14-5.15)" "SukiSU Android 14 5.15 SUSFS pin"
-assert_eq "6c2b5042ec656cd3ce9ad352a1e226e2e9e26779" \
-  "$(sukisu_compatible_susfs_commit gki-android14-6.1)" "SukiSU Android 14 6.1 SUSFS pin"
-if sukisu_compatible_susfs_commit unsupported >/dev/null 2>&1; then
-  fail "unknown SukiSU SUSFS branches must not silently fall back to HEAD"
-fi
 version_is_at_least 2.2.0 2.2.0 || fail "SUSFS minimum version equality"
 version_is_at_least 2.3.0 2.2.0 || fail "SUSFS newer version acceptance"
 if version_is_at_least 2.1.9 2.2.0; then
@@ -369,13 +330,11 @@ assert_eq "16" "$SUPPORTED_ANDROID_VERSIONS" "Android 16 development detection"
 ANYKERNEL_FIXTURE="$(mktemp)"
 UPDATE_BINARY_FIXTURE="$(mktemp)"
 APP_STAGING_FIXTURE="$(mktemp)"
-KPM_CONFIG_FIXTURE="$(mktemp)"
-KSUN_NOMOUNT_CONFIG_FIXTURE="$(mktemp)"
-ZEROMOUNT_CONFIG_FIXTURE="$(mktemp)"
-ZEROMOUNT_FIXTURE_DIR="$(mktemp -d)"
+BAKASU_NOMOUNT_CONFIG_FIXTURE="$(mktemp)"
+DROIDSPACES_CONFIG_FIXTURE="$(mktemp)"
+DROIDSPACES_FIXTURE_DIR="$(mktemp -d)"
 MODULE_CONFIG_FIXTURE="$(mktemp)"
 SCMVERSION_FIXTURE="$(mktemp)"
-KPM_VERIFY_FIXTURE="$(mktemp -d)"
 NOMOUNT_FIXTURE_DIR="$(mktemp -d)"
 EXTRACT_CERT_FIXTURE_DIR="$(mktemp -d)"
 ANYKERNEL_CACHE_FIXTURE_DIR="$(mktemp -d)"
@@ -383,7 +342,7 @@ ANYKERNEL_PACKAGE_FIXTURE_DIR="$(mktemp -d)"
 ANYKERNEL_SLOT_FIXTURE_DIR="$(mktemp -d)"
 SUSFS_VENDOR_FIXTURE_DIR="$(mktemp -d)"
 RESOLVER_FIXTURE_DIR="$(mktemp -d)"
-trap 'rm -f "$ANYKERNEL_FIXTURE" "$UPDATE_BINARY_FIXTURE" "$APP_STAGING_FIXTURE" "$KPM_CONFIG_FIXTURE" "$KSUN_NOMOUNT_CONFIG_FIXTURE" "$ZEROMOUNT_CONFIG_FIXTURE" "$MODULE_CONFIG_FIXTURE" "$SCMVERSION_FIXTURE"; rm -rf "$KPM_VERIFY_FIXTURE" "$NOMOUNT_FIXTURE_DIR" "$ZEROMOUNT_FIXTURE_DIR" "$EXTRACT_CERT_FIXTURE_DIR" "$ANYKERNEL_CACHE_FIXTURE_DIR" "$ANYKERNEL_PACKAGE_FIXTURE_DIR" "$ANYKERNEL_SLOT_FIXTURE_DIR" "$SUSFS_VENDOR_FIXTURE_DIR" "$RESOLVER_FIXTURE_DIR"' EXIT
+trap 'rm -f "$ANYKERNEL_FIXTURE" "$UPDATE_BINARY_FIXTURE" "$APP_STAGING_FIXTURE" "$BAKASU_NOMOUNT_CONFIG_FIXTURE" "$DROIDSPACES_CONFIG_FIXTURE" "$MODULE_CONFIG_FIXTURE" "$SCMVERSION_FIXTURE"; rm -rf "$NOMOUNT_FIXTURE_DIR" "$DROIDSPACES_FIXTURE_DIR" "$EXTRACT_CERT_FIXTURE_DIR" "$ANYKERNEL_CACHE_FIXTURE_DIR" "$ANYKERNEL_PACKAGE_FIXTURE_DIR" "$ANYKERNEL_SLOT_FIXTURE_DIR" "$SUSFS_VENDOR_FIXTURE_DIR" "$RESOLVER_FIXTURE_DIR"' EXIT
 
 # Exercise the real resolver with offline upstream refs, including a default
 # branch migration to 17.0 and an explicit selection of the older 16.0 branch.
@@ -465,88 +424,213 @@ for crdroid_profile in \
   done
 done
 
-# SUSFS variants retain tested root revisions while other presets follow main.
-for suki_preset in \
-  'SukiSU Ultra + KPM (experimental)' \
-  'SukiSU Ultra + SUSFS + KPM (experimental)' \
-  'SukiSU Ultra + SUSFS + NoMount + KPM (experimental)' \
-  'SukiSU Ultra + SUSFS + ZeroMount + KPM (experimental)' \
-  'ReSukiSU' \
-  'ReSukiSU + susfs' \
-  'ReSukiSU + SUSFS + NoMount (experimental)' \
-  'ReSukiSU + SUSFS + ZeroMount (experimental)'; do
+# BakaSU is the only supported root solution and is always pinned to the
+# tested revision so that a moving main cannot change an otherwise identical
+# build.
+for root_preset in \
+  'BakaSU' \
+  'BakaSU + SUSFS' \
+  'BakaSU + SUSFS + NoMount (experimental)'; do
   : > "$RESOLVER_FIXTURE_DIR/env"
   PATH="$RESOLVER_FIXTURE_DIR/bin:$PATH" \
   RESOLVER_REAL_GIT="$RESOLVER_REAL_GIT" \
   INPUT_BUILD_PROFILE='SM8550 | OnePlus 11 / 12R | crDroid' \
   INPUT_BRANCH_MODE='Use the recommended branch automatically' \
   INPUT_CLANG_CHOICE='Recommended (auto-select based on branch)' \
-  INPUT_ROOT_SOLUTION="$suki_preset" \
+  INPUT_ROOT_SOLUTION="$root_preset" \
   INPUT_BUILD_MODE='Patch/config validation only' \
   GITHUB_ENV="$RESOLVER_FIXTURE_DIR/env" \
   GITHUB_OUTPUT="$RESOLVER_FIXTURE_DIR/output" \
   GITHUB_STEP_SUMMARY="$RESOLVER_FIXTURE_DIR/summary" \
-    bash "$RESOLVER_SCRIPT" > "$RESOLVER_FIXTURE_DIR/log"
-  if [[ "$suki_preset" == ReSukiSU* && "${suki_preset,,}" == *susfs* ]]; then
-    grep -Fxq 'KSU_COMMIT=fa8311f632a215b5381ec644627c6198d1e8a13e' "$RESOLVER_FIXTURE_DIR/env" \
-      || fail "$suki_preset lost its compatible ReSukiSU pin"
-  elif [[ "$suki_preset" == *SUSFS* ]]; then
-    grep -Fxq 'KSU_COMMIT=7fbbb1f12e2410b69c8ebf958be84f165b8d0c93' "$RESOLVER_FIXTURE_DIR/env" \
-      || fail "$suki_preset lost its compatible SukiSU pin"
-  else
-    grep -Fxq 'KSU_REF=main' "$RESOLVER_FIXTURE_DIR/env" \
-      || fail "$suki_preset must track main"
-    grep -Fxq 'KSU_COMMIT=1111111111111111111111111111111111111111' "$RESOLVER_FIXTURE_DIR/env" \
-      || fail "$suki_preset must resolve the current upstream commit"
-  fi
+    bash "$RESOLVER_SCRIPT" > "$RESOLVER_FIXTURE_DIR/log" \
+    || fail "$root_preset resolver failed"
+  grep -Fxq 'KSU_REPO=https://github.com/Baka-SU/BakaSU.git' "$RESOLVER_FIXTURE_DIR/env" \
+    || fail "$root_preset must resolve the BakaSU repository"
+  grep -Fxq 'KSU_COMMIT=b2c595ddfa64b685e5a144ad37b7c95f912fb92a' "$RESOLVER_FIXTURE_DIR/env" \
+    || fail "$root_preset lost its BakaSU pin"
 done
 
-mkdir -p "$ZEROMOUNT_FIXTURE_DIR/fs"
-cat > "$ZEROMOUNT_FIXTURE_DIR/fs/stat.c" <<'EOF'
-static int vfs_statx(int dfd, const char __user *filename, int flags,
-		     struct kstat *stat, u32 request_mask)
-{
-	int error;
-#ifdef CONFIG_KSU_SUSFS
-#ifdef CONFIG_ZEROMOUNT
-	if (filename)
-		return zeromount_stat_hook(dfd, filename, stat, request_mask, flags);
-#endif
+# Droidspaces integration: kernel series detection, kABI slot/patch mapping,
+# NTSync patch mapping and the stock-ABI guard are pure or fixture-driven so
+# they can be verified without cloning a kernel.
+mkdir -p "$DROIDSPACES_FIXTURE_DIR/kernel"
+printf '%s\n' 'VERSION = 5' 'PATCHLEVEL = 15' 'SUBLEVEL = 123' \
+  > "$DROIDSPACES_FIXTURE_DIR/kernel/Makefile"
+assert_eq "5.15" "$(detect_kernel_series "$DROIDSPACES_FIXTURE_DIR/kernel/Makefile")" \
+  "Droidspaces 5.15 series detection"
+printf '%s\n' 'VERSION = 6' 'PATCHLEVEL = 12' \
+  > "$DROIDSPACES_FIXTURE_DIR/kernel/Makefile"
+assert_eq "6.12" "$(detect_kernel_series "$DROIDSPACES_FIXTURE_DIR/kernel/Makefile")" \
+  "Droidspaces 6.12 series detection"
+if detect_kernel_series "$DROIDSPACES_FIXTURE_DIR/missing-Makefile" >/dev/null 2>&1; then
+  fail "Droidspaces series detection accepted a missing kernel Makefile"
+fi
 
-	struct filename *fname = NULL;
-#endif
-	return error;
-}
+assert_eq "6_7_8" "$(droidspaces_slot_name 678)" "Droidspaces slot 678 mapping"
+assert_eq "1_2_3" "$(droidspaces_slot_name 123)" "Droidspaces slot 123 mapping"
+assert_eq "3_4_5" "$(droidspaces_slot_name 345)" "Droidspaces slot 345 mapping"
+assert_eq "" "$(droidspaces_slot_name off)" "Droidspaces disabled slot mapping"
+if droidspaces_slot_name 999 >/dev/null 2>&1; then
+  fail "Droidspaces accepted an unknown kABI slot"
+fi
+for droidspaces_series in 5.10 5.15 6.1 6.6; do
+  assert_eq \
+    "Documentation/resources/kernel-patches/GKI/below-kernel-6.12/001.GKI-below-6.12-fix_sysvipc_kabi_3_4_5.patch" \
+    "$(droidspaces_gki_patch_relpath "$droidspaces_series" 3_4_5)" \
+    "Droidspaces $droidspaces_series kABI patch mapping"
+done
+for droidspaces_series in 6.12 6.18; do
+  assert_eq \
+    "Documentation/resources/kernel-patches/GKI/kernel-6.12/001.GKI-6.12-or-above-fix_sysvipc_kabi.patch" \
+    "$(droidspaces_gki_patch_relpath "$droidspaces_series" 6_7_8)" \
+    "Droidspaces $droidspaces_series kABI patch mapping"
+done
+if droidspaces_gki_patch_relpath 4.19 6_7_8 >/dev/null 2>&1; then
+  fail "Droidspaces accepted an unsupported kernel series"
+fi
+assert_eq "android12-5.10" "$(droidspaces_ntsync_patch_name 5.10 12)" \
+  "Droidspaces NTSync 5.10 patch mapping"
+assert_eq "android12-5.10_OOS14" "$(droidspaces_ntsync_patch_name 5.10 14)" \
+  "Droidspaces NTSync 5.10 OOS14 patch mapping"
+assert_eq "android13-5.15" "$(droidspaces_ntsync_patch_name 5.15 15)" \
+  "Droidspaces NTSync 5.15 patch mapping"
+assert_eq "android14-6.1" "$(droidspaces_ntsync_patch_name 6.1 14)" \
+  "Droidspaces NTSync 6.1 patch mapping"
+assert_eq "android15-6.6" "$(droidspaces_ntsync_patch_name 6.6 15)" \
+  "Droidspaces NTSync 6.6 patch mapping"
+assert_eq "android16-6.12" "$(droidspaces_ntsync_patch_name 6.12 16)" \
+  "Droidspaces NTSync 6.12 patch mapping"
+if droidspaces_ntsync_patch_name 4.19 12 >/dev/null 2>&1; then
+  fail "Droidspaces NTSync accepted an unsupported kernel series"
+fi
+
+# The stock ABI guard must detect an already enabled option in the base
+# defconfig or in any active vendor fragment.
+mkdir -p "$DROIDSPACES_FIXTURE_DIR/config/arch/arm64/configs"
+printf '%s\n' '# CONFIG_SYSVIPC is not set' \
+  > "$DROIDSPACES_FIXTURE_DIR/config/arch/arm64/configs/gki_defconfig"
+printf '%s\n' 'CONFIG_SYSVIPC=y' \
+  > "$DROIDSPACES_FIXTURE_DIR/config/arch/arm64/configs/vendor.config"
+(
+  cd "$DROIDSPACES_FIXTURE_DIR/config"
+  ACTIVE_BUILD_CONFIGS="arch/arm64/configs/vendor.config"
+  droidspaces_config_enabled_in_inputs CONFIG_SYSVIPC >/dev/null \
+    || fail "Droidspaces did not detect SYSVIPC in a vendor fragment"
+  if droidspaces_config_enabled_in_inputs CONFIG_POSIX_MQUEUE >/dev/null; then
+    fail "Droidspaces reported a disabled option as enabled"
+  fi
+)
+
+# Enabling Droidspaces must turn on the guarded container options, skip
+# symbols the source does not define and disable Android's paranoid network
+# option when the kernel implements it.
+cat > "$DROIDSPACES_FIXTURE_DIR/config/Kconfig" <<'EOF'
+config SYSVIPC
+	bool "System V IPC"
+config POSIX_MQUEUE
+	bool "POSIX Message Queues"
+config IPC_NS
+	bool "IPC Namespaces"
+config PID_NS
+	bool "PID Namespaces"
+config DEVTMPFS
+	bool "Maintain a devtmpfs"
+config ANDROID_PARANOID_NETWORK
+	bool "Android paranoid network"
+config NETFILTER_XT_MATCH_ADDRTYPE
+	bool "addrtype match"
+config IP_SET
+	bool "IP set support"
 EOF
-repair_zeromount_stat_declaration "$ZEROMOUNT_FIXTURE_DIR/fs/stat.c" >/dev/null
-ZEROMOUNT_DECLARATION_LINE="$(grep -nF $'\tstruct filename *fname = NULL;' "$ZEROMOUNT_FIXTURE_DIR/fs/stat.c" | cut -d: -f1)"
-ZEROMOUNT_HOOK_LINE="$(sed -n '/^static int vfs_statx(/,$p' "$ZEROMOUNT_FIXTURE_DIR/fs/stat.c" | grep -n -m1 '^#ifdef CONFIG_ZEROMOUNT$' | cut -d: -f1)"
-(( ZEROMOUNT_DECLARATION_LINE < ZEROMOUNT_HOOK_LINE )) \
-  || fail "ZeroMount compatibility repair did not move the declaration before executable code"
-ZEROMOUNT_REPAIRED_HASH="$(sha256sum "$ZEROMOUNT_FIXTURE_DIR/fs/stat.c" | cut -d' ' -f1)"
-repair_zeromount_stat_declaration "$ZEROMOUNT_FIXTURE_DIR/fs/stat.c" >/dev/null
-assert_eq \
-  "$ZEROMOUNT_REPAIRED_HASH" \
-  "$(sha256sum "$ZEROMOUNT_FIXTURE_DIR/fs/stat.c" | cut -d' ' -f1)" \
-  "ZeroMount declaration repair idempotence"
-cat > "$ZEROMOUNT_FIXTURE_DIR/fs/stat-6.1.c" <<'EOF'
-static int vfs_statx(int dfd, struct filename *filename, int flags,
-		     struct kstat *stat, u32 request_mask)
-{
-	int error;
-#ifdef CONFIG_ZEROMOUNT
-	if (filename)
-		return zeromount_stat_hook(dfd, filename, stat, request_mask, flags);
-#endif
-	return error;
-}
-EOF
-ZEROMOUNT_61_HASH="$(sha256sum "$ZEROMOUNT_FIXTURE_DIR/fs/stat-6.1.c" | cut -d' ' -f1)"
-repair_zeromount_stat_declaration "$ZEROMOUNT_FIXTURE_DIR/fs/stat-6.1.c" >/dev/null
-assert_eq \
-  "$ZEROMOUNT_61_HASH" \
-  "$(sha256sum "$ZEROMOUNT_FIXTURE_DIR/fs/stat-6.1.c" | cut -d' ' -f1)" \
-  "ZeroMount 6.1 declaration-free compatibility"
+cp "$DROIDSPACES_FIXTURE_DIR/config/arch/arm64/configs/gki_defconfig" \
+  "$DROIDSPACES_CONFIG_FIXTURE"
+printf '%s\n' 'CONFIG_ANDROID_PARANOID_NETWORK=y' >> "$DROIDSPACES_CONFIG_FIXTURE"
+(
+  cd "$DROIDSPACES_FIXTURE_DIR/config"
+  KSU_TYPE=None DROIDSPACES_SLOT=678 DROIDSPACES_NTSYNC=true \
+    apply_variant_configs "$DROIDSPACES_CONFIG_FIXTURE"
+)
+for droidspaces_key in \
+  CONFIG_SYSVIPC CONFIG_POSIX_MQUEUE CONFIG_IPC_NS CONFIG_PID_NS \
+  CONFIG_DEVTMPFS CONFIG_NTSYNC CONFIG_NETFILTER_XT_MATCH_ADDRTYPE CONFIG_IP_SET; do
+  grep -q "^${droidspaces_key}=y$" "$DROIDSPACES_CONFIG_FIXTURE" \
+    || fail "Droidspaces did not enable $droidspaces_key"
+done
+grep -q '^# CONFIG_ANDROID_PARANOID_NETWORK is not set$' "$DROIDSPACES_CONFIG_FIXTURE" \
+  || fail "Droidspaces did not disable Android paranoid networking"
+if grep -q 'CONFIG_IP_SET_HASH_IP' "$DROIDSPACES_CONFIG_FIXTURE"; then
+  fail "Droidspaces enabled an optional symbol the source does not define"
+fi
+
+DROIDSPACES_DISABLED_FIXTURE="$(mktemp)"
+printf '%s\n' 'CONFIG_SYSVIPC=y' > "$DROIDSPACES_DISABLED_FIXTURE"
+(
+  cd "$DROIDSPACES_FIXTURE_DIR/config"
+  KSU_TYPE=None DROIDSPACES_SLOT=off DROIDSPACES_NTSYNC=false \
+    apply_variant_configs "$DROIDSPACES_DISABLED_FIXTURE"
+)
+assert_eq "CONFIG_SYSVIPC=y" "$(cat "$DROIDSPACES_DISABLED_FIXTURE")" \
+  "disabled Droidspaces must not change the config"
+rm -f "$DROIDSPACES_DISABLED_FIXTURE"
+
+# Droidspaces workflow inputs resolve to exact pinned patch commits and reject
+# NTSync without the container support.
+: > "$RESOLVER_FIXTURE_DIR/env"
+PATH="$RESOLVER_FIXTURE_DIR/bin:$PATH" \
+RESOLVER_REAL_GIT="$RESOLVER_REAL_GIT" \
+INPUT_BUILD_PROFILE='SM8550 | OnePlus 11 / 12R | LineageOS (recommended)' \
+INPUT_BRANCH_MODE='Use the recommended branch automatically' \
+INPUT_CLANG_CHOICE='Recommended (auto-select based on branch)' \
+INPUT_ROOT_SOLUTION='BakaSU + SUSFS + NoMount (experimental)' \
+INPUT_DROIDSPACES=678 \
+INPUT_DROIDSPACES_NTSYNC=true \
+INPUT_BUILD_MODE='Patch/config validation only' \
+GITHUB_ENV="$RESOLVER_FIXTURE_DIR/env" \
+GITHUB_OUTPUT="$RESOLVER_FIXTURE_DIR/output" \
+GITHUB_STEP_SUMMARY="$RESOLVER_FIXTURE_DIR/summary" \
+  bash "$RESOLVER_SCRIPT" > "$RESOLVER_FIXTURE_DIR/log" \
+  || fail "Droidspaces resolver case failed"
+for expected_field in \
+  'DROIDSPACES_SLOT=678' \
+  'DROIDSPACES_SLOT_NAME=6_7_8' \
+  'DROIDSPACES_ENABLED=1' \
+  'DROIDSPACES_COMMIT=9cf13113f0bbcc6c86d76dcf20647ffca8a30647' \
+  'DROIDSPACES_NTSYNC=true' \
+  'DROIDSPACES_NTSYNC_COMMIT=9ce4f6d896e0fbc266f1a058e048fb95fa3ceef0'; do
+  grep -Fxq "$expected_field" "$RESOLVER_FIXTURE_DIR/env" \
+    || fail "Droidspaces resolver output missing $expected_field"
+done
+grep -Fq 'Droidspaces: kABI slot 678' "$RESOLVER_FIXTURE_DIR/summary" \
+  || fail "Droidspaces resolver summary is missing the selected slot"
+if PATH="$RESOLVER_FIXTURE_DIR/bin:$PATH" \
+   RESOLVER_REAL_GIT="$RESOLVER_REAL_GIT" \
+   INPUT_BUILD_PROFILE='SM8550 | OnePlus 11 / 12R | LineageOS (recommended)' \
+   INPUT_BRANCH_MODE='Use the recommended branch automatically' \
+   INPUT_CLANG_CHOICE='Recommended (auto-select based on branch)' \
+   INPUT_ROOT_SOLUTION='No root changes' \
+   INPUT_DROIDSPACES=off \
+   INPUT_DROIDSPACES_NTSYNC=true \
+   INPUT_BUILD_MODE='Patch/config validation only' \
+   GITHUB_ENV="$RESOLVER_FIXTURE_DIR/env" \
+   GITHUB_OUTPUT="$RESOLVER_FIXTURE_DIR/output" \
+   GITHUB_STEP_SUMMARY="$RESOLVER_FIXTURE_DIR/summary" \
+     bash "$RESOLVER_SCRIPT" >/dev/null 2>&1; then
+  fail "resolver accepted NTSync without Droidspaces"
+fi
+if PATH="$RESOLVER_FIXTURE_DIR/bin:$PATH" \
+   RESOLVER_REAL_GIT="$RESOLVER_REAL_GIT" \
+   INPUT_BUILD_PROFILE='SM8550 | OnePlus 11 / 12R | LineageOS (recommended)' \
+   INPUT_BRANCH_MODE='Use the recommended branch automatically' \
+   INPUT_CLANG_CHOICE='Recommended (auto-select based on branch)' \
+   INPUT_ROOT_SOLUTION='No root changes' \
+   INPUT_DROIDSPACES=999 \
+   INPUT_BUILD_MODE='Patch/config validation only' \
+   GITHUB_ENV="$RESOLVER_FIXTURE_DIR/env" \
+   GITHUB_OUTPUT="$RESOLVER_FIXTURE_DIR/output" \
+   GITHUB_STEP_SUMMARY="$RESOLVER_FIXTURE_DIR/summary" \
+     bash "$RESOLVER_SCRIPT" >/dev/null 2>&1; then
+  fail "resolver accepted an invalid Droidspaces slot"
+fi
 
 mkdir -p "$SUSFS_VENDOR_FIXTURE_DIR/fs"
 cat > "$SUSFS_VENDOR_FIXTURE_DIR/fs/namespace.c" <<'EOF'
@@ -787,71 +871,14 @@ assert_eq "$EXTRACT_CERT_PROVIDER_HASH" \
   "$(sha256sum "$EXTRACT_CERT_FIXTURE_DIR/provider-extract-cert.c" | cut -d' ' -f1)" \
   "provider-aware extract-cert source preservation"
 
-mkdir -p \
-  "$KPM_VERIFY_FIXTURE/out/drivers/kernelsu/infra" \
-  "$KPM_VERIFY_FIXTURE/toolchain"
-: > "$KPM_VERIFY_FIXTURE/out/drivers/kernelsu/infra/symbol_resolver.o"
-printf '%s\n' '0000000000001000 T sukisu_handle_kpm' > "$KPM_VERIFY_FIXTURE/out/System.map"
-cat > "$KPM_VERIFY_FIXTURE/toolchain/llvm-nm" <<'EOF'
-#!/usr/bin/env bash
-case "${*: -1}" in
-  */infra/symbol_resolver.o)
-    printf '%s\n' '0000000000000000 T find_kernel_symbol_exact'
-    ;;
-  out/vmlinux)
-    printf '%s\n' \
-      '0000000000001000 r __ksymtab__raw_spin_lock' \
-      '0000000000001004 r __ksymtab__raw_spin_unlock' \
-      '0000000000001008 r __ksymtab_kasan_flag_enabled'
-    ;;
-  *) exit 1 ;;
-esac
-EOF
-chmod +x "$KPM_VERIFY_FIXTURE/toolchain/llvm-nm"
-(
-  cd "$KPM_VERIFY_FIXTURE"
-  export KSU_DRIVER_DIR=drivers
-  export CLANG_ROOT="$KPM_VERIFY_FIXTURE/toolchain"
-  export KERNEL_BRANCH=test-branch
-  export KERNEL_COMMIT=test-kernel
-  export KSU_COMMIT=test-sukisu
-  verify_kpm_binary_presence >/dev/null
-  grep -Fq 'T find_kernel_symbol_exact' kpm-proof.txt \
-    || fail "KPM proof does not record the leaf resolver definition"
-)
-
-KSU_TYPE="SukiSU-Ultra-with-susfs-nomount-KPM"
-apply_variant_configs "$KPM_CONFIG_FIXTURE"
-grep -q '^CONFIG_KPM=y$' "$KPM_CONFIG_FIXTURE" || fail "KPM config"
-grep -q '^CONFIG_KALLSYMS=y$' "$KPM_CONFIG_FIXTURE" || fail "KPM kallsyms config"
-grep -q '^CONFIG_KALLSYMS_ALL=y$' "$KPM_CONFIG_FIXTURE" || fail "KPM kallsyms-all config"
-grep -q '^CONFIG_KSU_SUSFS=y$' "$KPM_CONFIG_FIXTURE" || fail "combined preset SUSFS config"
-grep -q '^CONFIG_KSU_SUSFS_SUS_MAP=y$' "$KPM_CONFIG_FIXTURE" || fail "combined preset SUSFS map config"
-grep -q '^CONFIG_KSU_SUSFS_OPEN_REDIRECT=y$' "$KPM_CONFIG_FIXTURE" || fail "combined preset SUSFS redirect config"
-grep -q '^CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y$' "$KPM_CONFIG_FIXTURE" || fail "combined preset SUSFS symbol hiding config"
-grep -q '^CONFIG_KEYS=y$' "$KPM_CONFIG_FIXTURE" || fail "combined preset NoMount key config"
-grep -q '^CONFIG_NOMOUNT=y$' "$KPM_CONFIG_FIXTURE" || fail "combined preset NoMount config"
-
-KSU_TYPE="KernelSU-Next-with-susfs-nomount"
-apply_variant_configs "$KSUN_NOMOUNT_CONFIG_FIXTURE"
-grep -q '^CONFIG_KSU_SUSFS=y$' "$KSUN_NOMOUNT_CONFIG_FIXTURE" || fail "KernelSU-Next NoMount SUSFS config"
-grep -q '^# CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS is not set$' "$KSUN_NOMOUNT_CONFIG_FIXTURE" || fail "KernelSU-Next symbol hiding must stay disabled"
-grep -q '^CONFIG_KEYS=y$' "$KSUN_NOMOUNT_CONFIG_FIXTURE" || fail "KernelSU-Next NoMount key config"
-grep -q '^CONFIG_NOMOUNT=y$' "$KSUN_NOMOUNT_CONFIG_FIXTURE" || fail "KernelSU-Next NoMount config"
-if grep -q '^CONFIG_ZEROMOUNT=y$' "$KSUN_NOMOUNT_CONFIG_FIXTURE"; then
-  fail "KernelSU-Next NoMount preset must not enable ZeroMount"
-fi
-
-KSU_TYPE="SukiSU-Ultra-with-susfs-zeromount-KPM"
-apply_variant_configs "$ZEROMOUNT_CONFIG_FIXTURE"
-grep -q '^CONFIG_ZEROMOUNT=y$' "$ZEROMOUNT_CONFIG_FIXTURE" || fail "combined preset ZeroMount config"
-grep -q '^CONFIG_KSU_SUSFS=y$' "$ZEROMOUNT_CONFIG_FIXTURE" || fail "ZeroMount preset SUSFS config"
-grep -q '^CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y$' "$ZEROMOUNT_CONFIG_FIXTURE" || fail "ZeroMount preset SUSFS symbol hiding config"
-grep -q '^CONFIG_KPM=y$' "$ZEROMOUNT_CONFIG_FIXTURE" || fail "ZeroMount preset KPM config"
-if grep -q '^CONFIG_NOMOUNT=y$' "$ZEROMOUNT_CONFIG_FIXTURE"; then
-  fail "ZeroMount preset must not enable NoMount"
-fi
-
+KSU_TYPE="BakaSU-with-susfs-nomount"
+apply_variant_configs "$BAKASU_NOMOUNT_CONFIG_FIXTURE"
+grep -q '^CONFIG_KSU_SUSFS=y$' "$BAKASU_NOMOUNT_CONFIG_FIXTURE" || fail "BakaSU NoMount SUSFS config"
+grep -q '^CONFIG_KSU_SUSFS_SUS_MAP=y$' "$BAKASU_NOMOUNT_CONFIG_FIXTURE" || fail "BakaSU NoMount SUSFS map config"
+grep -q '^CONFIG_KSU_SUSFS_OPEN_REDIRECT=y$' "$BAKASU_NOMOUNT_CONFIG_FIXTURE" || fail "BakaSU NoMount SUSFS redirect config"
+grep -q '^# CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS is not set$' "$BAKASU_NOMOUNT_CONFIG_FIXTURE" || fail "BakaSU symbol hiding must stay disabled"
+grep -q '^CONFIG_KEYS=y$' "$BAKASU_NOMOUNT_CONFIG_FIXTURE" || fail "BakaSU NoMount key config"
+grep -q '^CONFIG_NOMOUNT=y$' "$BAKASU_NOMOUNT_CONFIG_FIXTURE" || fail "BakaSU NoMount config"
 cat > "$MODULE_CONFIG_FIXTURE" <<'EOF'
 CONFIG_MODULES=y
 # CONFIG_MODULE_UNLOAD is not set
@@ -875,7 +902,7 @@ apply_variant_configs "$MODULE_CONFIG_FIXTURE"
 assert_eq "$MODULE_CONFIG_HASH" \
   "$(sha256sum "$MODULE_CONFIG_FIXTURE" | cut -d' ' -f1)" \
   "no-root preset must preserve vendor ABI-sensitive configs byte for byte"
-KSU_TYPE="SukiSU-Ultra-with-susfs-nomount-KPM"
+KSU_TYPE="BakaSU-with-susfs-nomount"
 apply_variant_configs "$MODULE_CONFIG_FIXTURE"
 assert_eq "$MODULE_ABI_SNAPSHOT" \
   "$(grep -E "$MODULE_ABI_PATTERN" "$MODULE_CONFIG_FIXTURE")" \
@@ -962,7 +989,6 @@ mkdir -p \
   "$ANYKERNEL_PACKAGE_FIXTURE_DIR/magisk-apk/lib/arm64-v8a" \
   "$ANYKERNEL_PACKAGE_FIXTURE_DIR/work/sm8550/out/arch/arm64/boot" \
   "$ANYKERNEL_PACKAGE_FIXTURE_DIR/work/sm8650/out/arch/arm64/boot" \
-  "$ANYKERNEL_PACKAGE_FIXTURE_DIR/work/sm8550/SukiSU-Ultra/userspace/ksud/bin/aarch64" \
   "$ANYKERNEL_PACKAGE_FIXTURE_DIR/bin"
 printf '%s\n' \
   'kernel.string=placeholder' \
@@ -1007,7 +1033,6 @@ printf '%s\n' 'kernel.string=dirty-cache' > "$ANYKERNEL_PACKAGE_FIXTURE_DIR/work
 printf '%s\n' stale > "$ANYKERNEL_PACKAGE_FIXTURE_DIR/work/AnyKernel3/Image"
 printf '%s\n' image > "$ANYKERNEL_PACKAGE_FIXTURE_DIR/work/sm8550/out/arch/arm64/boot/Image"
 printf '%s\n' image > "$ANYKERNEL_PACKAGE_FIXTURE_DIR/work/sm8650/out/arch/arm64/boot/Image"
-printf '%s\n' sukisu-arm64-busybox > "$ANYKERNEL_PACKAGE_FIXTURE_DIR/work/sm8550/SukiSU-Ultra/userspace/ksud/bin/aarch64/busybox"
 printf '%s\n' magisk-arm64-magiskboot > "$ANYKERNEL_PACKAGE_FIXTURE_DIR/magisk-apk/lib/arm64-v8a/libmagiskboot.so"
 printf '%s\n' magisk-arm64-busybox > "$ANYKERNEL_PACKAGE_FIXTURE_DIR/magisk-apk/lib/arm64-v8a/libbusybox.so"
 (
@@ -1030,8 +1055,7 @@ EOF
 chmod +x \
   "$ANYKERNEL_PACKAGE_FIXTURE_DIR/bin/jq" \
   "$ANYKERNEL_PACKAGE_FIXTURE_DIR/bin/zip" \
-  "$ANYKERNEL_PACKAGE_FIXTURE_DIR/bin/readelf" \
-  "$ANYKERNEL_PACKAGE_FIXTURE_DIR/work/sm8550/SukiSU-Ultra/userspace/ksud/bin/aarch64/busybox"
+  "$ANYKERNEL_PACKAGE_FIXTURE_DIR/bin/readelf"
 
 for package_timestamp in 20260101_000000 20260101_000001; do
   (
@@ -1049,8 +1073,8 @@ for package_timestamp in 20260101_000000 20260101_000001; do
     KERNEL_COMMIT=1111111111111111111111111111111111111111 \
     MODULES_COMMIT=2222222222222222222222222222222222222222 \
     CLANG_VERSION=test-clang \
-    KSU_TYPE=SukiSU-Ultra-with-susfs-nomount-KPM \
-    KSU_REPO=https://github.com/SukiSU-Ultra/SukiSU-Ultra.git \
+    KSU_TYPE=BakaSU-with-susfs-nomount \
+    KSU_REPO=https://github.com/Baka-SU/BakaSU.git \
     KSU_COMMIT=3333333333333333333333333333333333333333 \
     SUSFS_REF=test \
     SUSFS_COMMIT=4444444444444444444444444444444444444444 \
@@ -1066,7 +1090,7 @@ for package_timestamp in 20260101_000000 20260101_000001; do
     ANYKERNEL_COMMIT="$ANYKERNEL_PACKAGE_COMMIT" \
     bash "$ANYKERNEL_PACKAGE_SCRIPT" >/dev/null
   )
-  test -s "$ANYKERNEL_PACKAGE_FIXTURE_DIR/work/release-assets/test-profile_SukiSU-Ultra-with-susfs-nomount-KPM_111111111111_${package_timestamp}.zip" \
+  test -s "$ANYKERNEL_PACKAGE_FIXTURE_DIR/work/release-assets/test-profile_BakaSU-with-susfs-nomount_111111111111_${package_timestamp}.zip" \
     || fail "AnyKernel packaging did not produce the flashable archive"
   test -s "$ANYKERNEL_PACKAGE_FIXTURE_DIR/work/release-assets/SHA256SUMS" \
     || fail "AnyKernel packaging did not produce checksums"
@@ -1089,44 +1113,25 @@ for package_timestamp in 20260101_000000 20260101_000001; do
     "$ANYKERNEL_PACKAGE_FIXTURE_DIR/work/AnyKernel3/anykernel.sh"; then
     fail "AnyKernel package still attempts to unpack a boot ramdisk"
   fi
-  assert_eq "sukisu-arm64-busybox" \
-    "$(cat "$ANYKERNEL_PACKAGE_FIXTURE_DIR/work/AnyKernel3/tools/busybox")" \
-    "KPM AnyKernel arm64 BusyBox replacement"
-  assert_eq "755" \
-    "$(stat -c '%a' "$ANYKERNEL_PACKAGE_FIXTURE_DIR/work/AnyKernel3/tools/busybox")" \
-    "KPM AnyKernel arm64 BusyBox permissions"
-  assert_eq "magisk-arm64-magiskboot" \
-    "$(cat "$ANYKERNEL_PACKAGE_FIXTURE_DIR/work/AnyKernel3/tools/magiskboot")" \
-    "KPM AnyKernel arm64 MagiskBoot replacement"
-  assert_eq "755" \
-    "$(stat -c '%a' "$ANYKERNEL_PACKAGE_FIXTURE_DIR/work/AnyKernel3/tools/magiskboot")" \
-    "KPM AnyKernel arm64 MagiskBoot permissions"
-  for optional_tool in fec httools_static lptools_static magiskpolicy snapshotupdater_static; do
-    test ! -e "$ANYKERNEL_PACKAGE_FIXTURE_DIR/work/AnyKernel3/tools/$optional_tool" \
-      || fail "KPM AnyKernel retained incompatible optional tool: $optional_tool"
-  done
   grep -Fq 'export AKHOME=/data/local/tmp/anykernel-$$;' \
     "$ANYKERNEL_PACKAGE_FIXTURE_DIR/work/AnyKernel3/META-INF/com/google/android/update-binary" \
     || fail "AnyKernel package does not stage app-triggered flashes in executable temporary storage"
   grep -Fq 'AnyKernel work directory: $AKHOME' \
     "$ANYKERNEL_PACKAGE_FIXTURE_DIR/work/AnyKernel3/META-INF/com/google/android/update-binary" \
     || fail "AnyKernel package does not report its effective staging directory"
-  grep -Fq 'Bundled BusyBox ABI: arm64' \
+  grep -Fq 'Bundled BusyBox ABI: arm' \
     "$ANYKERNEL_PACKAGE_FIXTURE_DIR/work/AnyKernel3/META-INF/com/google/android/update-binary" \
-    || fail "KPM AnyKernel package does not report its arm64 BusyBox"
-  grep -Fq 'Bundled MagiskBoot ABI: arm64' \
+    || fail "AnyKernel package does not report the legacy ARM BusyBox"
+  grep -Fq 'Bundled MagiskBoot ABI: arm' \
     "$ANYKERNEL_PACKAGE_FIXTURE_DIR/work/AnyKernel3/META-INF/com/google/android/update-binary" \
-    || fail "KPM AnyKernel package does not report its arm64 MagiskBoot"
-  grep -Fq 'Removing incompatible app-injected mkbootfs' \
-    "$ANYKERNEL_PACKAGE_FIXTURE_DIR/work/AnyKernel3/META-INF/com/google/android/update-binary" \
-    || fail "KPM AnyKernel package does not remove the manager's ARM32 mkbootfs"
+    || fail "AnyKernel package does not report the legacy ARM MagiskBoot"
   sh -n "$ANYKERNEL_PACKAGE_FIXTURE_DIR/work/AnyKernel3/META-INF/com/google/android/update-binary" \
     || fail "AnyKernel preflight diagnostics produced invalid shell syntax"
   PREFLIGHT_UPDATER_HASH="$(sha256sum "$ANYKERNEL_PACKAGE_FIXTURE_DIR/work/AnyKernel3/META-INF/com/google/android/update-binary" | cut -d' ' -f1)"
   patch_anykernel_app_flash_staging \
     "$ANYKERNEL_PACKAGE_FIXTURE_DIR/work/AnyKernel3/META-INF/com/google/android/update-binary"
   add_anykernel_preflight_diagnostics \
-    "$ANYKERNEL_PACKAGE_FIXTURE_DIR/work/AnyKernel3/META-INF/com/google/android/update-binary" arm64 true
+    "$ANYKERNEL_PACKAGE_FIXTURE_DIR/work/AnyKernel3/META-INF/com/google/android/update-binary" arm false
   assert_eq "$PREFLIGHT_UPDATER_HASH" \
     "$(sha256sum "$ANYKERNEL_PACKAGE_FIXTURE_DIR/work/AnyKernel3/META-INF/com/google/android/update-binary" | cut -d' ' -f1)" \
     "AnyKernel preflight diagnostics idempotence"
@@ -1147,7 +1152,7 @@ done
   KERNEL_COMMIT=1111111111111111111111111111111111111111 \
   MODULES_COMMIT=2222222222222222222222222222222222222222 \
   CLANG_VERSION=test-clang \
-  KSU_TYPE=KernelSU-Next-with-susfs \
+  KSU_TYPE=BakaSU-with-susfs \
   ROM_GKI_MODULE_COMPAT=1 \
   BUILD_TIMESTAMP=20260101_000002 \
   GITHUB_WORKSPACE="$ANYKERNEL_PACKAGE_FIXTURE_DIR/work" \
@@ -1161,7 +1166,7 @@ done
   ANYKERNEL_COMMIT="$ANYKERNEL_PACKAGE_COMMIT" \
   bash "$ANYKERNEL_PACKAGE_SCRIPT" >/dev/null
 )
-test -s "$ANYKERNEL_PACKAGE_FIXTURE_DIR/work/release-assets/sm8650-oneplus12-crdroid_KernelSU-Next-with-susfs_111111111111_20260101_000002_rom-gki-compat.zip" \
+test -s "$ANYKERNEL_PACKAGE_FIXTURE_DIR/work/release-assets/sm8650-oneplus12-crdroid_BakaSU-with-susfs_111111111111_20260101_000002_rom-gki-compat.zip" \
   || fail "OnePlus 12 package with arm64 tools was not produced"
 grep -Fxq 'supported.versions=17' "$ANYKERNEL_PACKAGE_FIXTURE_DIR/work/AnyKernel3/anykernel.sh" \
   || fail "crDroid 13 OnePlus 12 package does not enforce Android 17"
@@ -1286,4 +1291,4 @@ if detect_nomount_version "$NOMOUNT_SOURCE_FIXTURE/kernel/src" >/dev/null 2>&1; 
   fail "unknown NoMount version expressions must fail closed"
 fi
 
-echo "PASS: profiles, source compatibility, KPM, SUSFS floor, NoMount/ZeroMount integration, and AnyKernel protection"
+echo "PASS: profiles, BakaSU-only root mapping, SUSFS floor, NoMount/Droidspaces integration, and AnyKernel protection"

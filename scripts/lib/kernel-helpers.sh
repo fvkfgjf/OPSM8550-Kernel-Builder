@@ -206,16 +206,68 @@ enable_susfs_configs() {
     CONFIG_KSU_SUSFS_ENABLE_LOG \
     CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
     CONFIG_KSU_SUSFS_OPEN_REDIRECT
-  if [[ "$KSU_TYPE" == SukiSU-Ultra-with-susfs* ]]; then
-    enable_config_values "$config_file" CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
-  else
-    disable_config_values "$config_file" CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
-  fi
+  # BakaSU uses the SUSFS inline hook and must keep the KernelSU/SUSFS symbols
+  # resolvable, so the symbol-hiding option stays disabled.
+  disable_config_values "$config_file" CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
 }
 
 enable_ksu_common_configs() {
   local config_file="$1"
   enable_config_values "$config_file" CONFIG_TMPFS_XATTR
+}
+
+# True when the kernel tree actually defines the Kconfig symbol. Enabling an
+# unknown symbol is a silent no-op in Kconfig, so optional Droidspaces network
+# helpers are only enabled when the selected source implements them.
+kconfig_symbol_defined() {
+  local name="${1#CONFIG_}"
+  grep -RqsE --include='Kconfig*' --exclude-dir=out --exclude-dir=.git \
+    "^[[:space:]]*(menuconfig|config)[[:space:]]+${name}$" .
+}
+
+enable_config_if_defined() {
+  local config_file="$1"
+  local key="$2"
+
+  if kconfig_symbol_defined "$key"; then
+    set_config_value "$config_file" "$key" y
+  fi
+}
+
+# Droidspaces container support. The required options are ABI-safe together
+# with the kABI padding patches applied before config generation. Networking
+# helpers are optional and only enabled when the source defines them.
+enable_droidspaces_configs() {
+  local config_file="$1"
+
+  enable_config_values "$config_file" \
+    CONFIG_SYSCTL \
+    CONFIG_SYSVIPC \
+    CONFIG_POSIX_MQUEUE \
+    CONFIG_IPC_NS \
+    CONFIG_PID_NS \
+    CONFIG_DEVTMPFS
+
+  enable_config_if_defined "$config_file" CONFIG_NETFILTER_XT_MATCH_ADDRTYPE
+  enable_config_if_defined "$config_file" CONFIG_NETFILTER_XT_TARGET_LOG
+  enable_config_if_defined "$config_file" CONFIG_NETFILTER_XT_MATCH_RECENT
+  enable_config_if_defined "$config_file" CONFIG_IP_SET
+  enable_config_if_defined "$config_file" CONFIG_IP_SET_HASH_IP
+  enable_config_if_defined "$config_file" CONFIG_IP_SET_HASH_NET
+  enable_config_if_defined "$config_file" CONFIG_NETFILTER_XT_SET
+  enable_config_if_defined "$config_file" CONFIG_NETFILTER_XT_TARGET_REJECT
+  enable_config_if_defined "$config_file" CONFIG_IP_NF_TARGET_REJECT
+
+  # Android's paranoid network option only allows socket creation for members
+  # of AID_INET, which breaks NAT and macvlan container networking. Newer
+  # Android common kernels removed the option; keep this a no-op when absent.
+  if kconfig_symbol_defined CONFIG_ANDROID_PARANOID_NETWORK; then
+    disable_config_values "$config_file" CONFIG_ANDROID_PARANOID_NETWORK
+  fi
+
+  if [[ "${DROIDSPACES_NTSYNC:-false}" == "true" ]]; then
+    enable_config_values "$config_file" CONFIG_NTSYNC
+  fi
 }
 
 # A boot-only custom Image has a newly generated module signing key and cannot
@@ -266,12 +318,8 @@ apply_variant_configs() {
     enable_config_values "$config_file" CONFIG_KEYS CONFIG_NOMOUNT
   fi
 
-  if [[ "$KSU_TYPE" == *zeromount* ]]; then
-    enable_config_values "$config_file" CONFIG_ZEROMOUNT
-  fi
-
-  if [[ "$KSU_TYPE" == *KPM* ]]; then
-    enable_config_values "$config_file" CONFIG_KPM CONFIG_KALLSYMS CONFIG_KALLSYMS_ALL
+  if [[ "${DROIDSPACES_SLOT:-off}" != "off" ]]; then
+    enable_droidspaces_configs "$config_file"
   fi
 
 }

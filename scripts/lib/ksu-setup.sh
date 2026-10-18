@@ -79,29 +79,9 @@ install_ksu_variant() {
   case "$ksu_type" in
     "None")
       ;;
-    "Official-KernelSU")
-      : "${KSU_COMMIT:?KSU_COMMIT must be resolved for Official KernelSU}"
-      setup_kernelsu_repo "tiann" "KernelSU" "$KSU_COMMIT"
-      ;;
-    "KowSU")
-      : "${KSU_COMMIT:?KSU_COMMIT must be resolved for KowSU}"
-      setup_kernelsu_repo "KOWX712" "KernelSU" "$KSU_COMMIT"
-      ;;
-    "KernelSU-Next")
-      : "${KSU_COMMIT:?KSU_COMMIT must be resolved for KernelSU-Next}"
-      setup_kernelsu_repo "KernelSU-Next" "KernelSU-Next" "$KSU_COMMIT"
-      ;;
-    "KernelSU-Next-with-susfs"|"KernelSU-Next-with-susfs-nomount"|"KernelSU-Next-with-susfs-zeromount")
-      : "${KSU_COMMIT:?KSU_COMMIT must be resolved for KernelSU-Next with SUSFS}"
-      setup_kernelsu_repo "pershoot" "KernelSU-Next" "$KSU_COMMIT"
-      ;;
-    "SukiSU-Ultra-with-KPM"|"SukiSU-Ultra-with-susfs-KPM"|"SukiSU-Ultra-with-susfs-nomount-KPM"|"SukiSU-Ultra-with-susfs-zeromount-KPM")
-      : "${KSU_COMMIT:?KSU_COMMIT must be resolved for SukiSU Ultra}"
-      setup_kernelsu_repo "SukiSU-Ultra" "SukiSU-Ultra" "$KSU_COMMIT"
-      ;;
-    "ReSukiSU"|"ReSukiSU-with-susfs"|"ReSukiSU-with-susfs-nomount"|"ReSukiSU-with-susfs-zeromount")
-      : "${KSU_COMMIT:?KSU_COMMIT must be resolved for ReSukiSU}"
-      setup_kernelsu_repo "ReSukiSU" "ReSukiSU" "$KSU_COMMIT"
+    "BakaSU"|"BakaSU-with-susfs"|"BakaSU-with-susfs-nomount")
+      : "${KSU_COMMIT:?KSU_COMMIT must be resolved for BakaSU}"
+      setup_kernelsu_repo "Baka-SU" "BakaSU" "$KSU_COMMIT"
       ;;
     *)
       echo "::error::Unsupported ksu_type: $ksu_type"
